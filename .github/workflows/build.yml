@@ -1,0 +1,292 @@
+name: 统一构建并发布
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'  # 版本号标记
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  # 准备步骤，用于代码检出、版本控制和版本号更新
+  meta:
+    name: Gather Meta Information
+    runs-on: ubuntu-latest
+    outputs:
+      ref_name: ${{ github.ref_name }}
+      tag: ${{ steps.set_tag.outputs.tag }}
+      prerelease: ${{ steps.set_pre.outputs.prerelease }}
+    steps:
+      # 检查代码库
+      - name: Check-out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 确保能获取所有标签
+
+      # 设置版本标签
+      - name: Set tag
+        id: set_tag
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # For tag pushes, use the tag name
+            tag="${{ github.ref_name }}"
+          else
+            # For PRs and branch pushes, use git describe or fallback
+            tag=$(git describe --tags --match "v*" HEAD 2>/dev/null || echo "v0.0.1-$(git rev-parse --short HEAD)")
+          fi
+          echo "tag=${tag}" | tee -a $GITHUB_OUTPUT
+
+      # 检查是否为预发布版本
+      - name: Check if it is a pre-release
+        id: set_pre
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [[ '${{ steps.set_tag.outputs.tag }}' =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" | tee -a $GITHUB_OUTPUT
+          else
+            echo "prerelease=true" | tee -a $GITHUB_OUTPUT
+          fi
+
+      # 自动生成变更日志
+      - name: Generate Changelog
+        id: generate_changelog
+        run: |
+          echo "=== Generating Changelog ==="
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Get previous tag
+            previous_tag=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            if [[ -n "$previous_tag" ]]; then
+              echo "Generating changelog from $previous_tag to ${{ steps.set_tag.outputs.tag }}"
+              # 获取完整的提交列表
+              git log --oneline "$previous_tag..HEAD" | grep -v "Merge pull request" > full_commits.txt
+              # 计算提交数量
+              total_commits=$(wc -l < full_commits.txt)
+              # 只取前15个提交
+              head -15 full_commits.txt > CHANGELOG.md
+              # 如果提交数量超过15个，添加Full Changelog链接
+              if [[ $total_commits -gt 15 ]]; then
+                echo "" >> CHANGELOG.md
+                echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_tag...${{ steps.set_tag.outputs.tag }}" >> CHANGELOG.md
+              fi
+            else
+              echo "First release, no previous tag found"
+              # 首次发布，只取前15个提交
+              git log --oneline | grep -v "Merge pull request" | head -15 > CHANGELOG.md
+            fi
+          else
+            echo "Generating changelog for development build"
+            # 开发构建，只取前15个提交
+            git log --oneline --since="1 week ago" | grep -v "Merge pull request" | head -15 > CHANGELOG.md
+          fi
+          
+          # Add header to changelog
+          echo "## What's Changed" > temp_changelog.md
+          echo "" >> temp_changelog.md
+          cat CHANGELOG.md >> temp_changelog.md
+          mv temp_changelog.md CHANGELOG.md
+          
+          echo "Changelog generated:"
+          cat CHANGELOG.md
+          echo "===================="
+
+      # 更新版本号
+      - name: Update version in ALAS_Logs_Archive.py
+        run: |
+          tag="${{ steps.set_tag.outputs.tag }}"
+          sed -i "s/Version: v[0-9]\+\.[0-9]\+\.[0-9]\+/Version: $tag/g" ALAS_Logs_Archive.py
+          echo "Updated version to $tag in ALAS_Logs_Archive.py"
+          cat ALAS_Logs_Archive.py | grep "Version:"
+
+      # 上传更新后的代码作为 artifact
+      - name: Upload updated code
+        uses: actions/upload-artifact@v4
+        with:
+          name: updated-code
+          path: .
+          retention-days: 7
+
+  # Nuitka 构建
+  build-nuitka:
+    name: Build with Nuitka
+    needs: meta
+    runs-on: windows-latest
+    steps:
+      # 下载更新后的代码
+      - name: Download updated code
+        uses: actions/download-artifact@v4
+        with:
+          name: updated-code
+          path: .
+
+      # 检查当前 Python 版本
+      - name: Check Python
+        id: check_python
+        shell: bash
+        run: |
+          # 检查 Python 版本
+          PYTHON_VERSION=$(python --version 2>&1 || python3 --version 2>&1)
+          echo "Detected Python version: $PYTHON_VERSION"
+          
+          if echo "$PYTHON_VERSION" | grep -i "python 3\.12"; then
+            echo "python_version=3.12" >> $GITHUB_OUTPUT
+            echo "skip_setup=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip_setup=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 设置 Python 环境（仅当当前版本不是 3.12 时）
+      - name: Setup Python
+        if: steps.check_python.outputs.skip_setup != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+          cache: 'pip'
+
+      # 使用 Nuitka 编译为可执行文件
+      - name: Build Executable with Nuitka
+        uses: Nuitka/Nuitka-Action@main
+        with:
+          nuitka-version: main
+          script-name: ALAS_Logs_Archive.py
+          mode: onefile
+          windows-console-mode: force
+          assume-yes-for-downloads: true
+          follow-imports: true
+          output-dir: build
+          no-deployment-flag: self-execution
+          nofollow-import-to: '*.tests'
+
+      # 上传 Nuitka 编译的可执行文件作为 artifact
+      - name: Upload Nuitka artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALAS_Logs_Archive-Nuitka-${{ needs.meta.outputs.tag }}
+          path: build/ALAS_Logs_Archive.exe
+          retention-days: 7
+
+  # PyInstaller 构建
+  build-pyinstaller:
+    name: Build with PyInstaller
+    needs: meta
+    runs-on: windows-latest
+    steps:
+      # 下载更新后的代码
+      - name: Download updated code
+        uses: actions/download-artifact@v4
+        with:
+          name: updated-code
+          path: .
+
+      # 检查当前 Python 版本
+      - name: Check Python
+        id: check_python
+        shell: bash
+        run: |
+          # 检查 Python 版本
+          PYTHON_VERSION=$(python --version 2>&1 || python3 --version 2>&1)
+          echo "Detected Python version: $PYTHON_VERSION"
+          
+          if echo "$PYTHON_VERSION" | grep -i "python 3\.12"; then
+            echo "python_version=3.12" >> $GITHUB_OUTPUT
+            echo "skip_setup=true" >> $GITHUB_OUTPUT
+          else
+            echo "skip_setup=false" >> $GITHUB_OUTPUT
+          fi
+
+      # 设置 Python 环境（仅当当前版本不是 3.12 时）
+      - name: Setup Python
+        if: steps.check_python.outputs.skip_setup != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+          cache: 'pip'
+          cache-dependency-path: 'requirements.txt'
+
+      # 安装依赖
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      # 打包可执行文件（PyInstaller）
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller ALAS_Logs_Archive.spec --noconfirm
+
+      # 上传 PyInstaller 打包的可执行文件作为 artifact
+      - name: Upload PyInstaller artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ALAS_Logs_Archive-PyInstaller-${{ needs.meta.outputs.tag }}
+          path: dist/ALAS_Logs_Archive.exe
+          retention-days: 7
+
+  # 发布步骤
+  release:
+    name: Publish Release
+    needs: [meta, build-nuitka, build-pyinstaller]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    steps:
+      # 下载所有构建产物
+      - name: Download artifacts from GitHub
+        uses: actions/download-artifact@v4
+        with:
+          path: assets
+
+      # 整理和清理文件
+      - name: Clean up files
+        run: |
+          # 检查并创建必要的目录
+          mkdir -p release
+          
+          # 移动和重命名 Nuitka 构建产物
+          if [ -d "assets/ALAS_Logs_Archive-Nuitka-${{ needs.meta.outputs.tag }}" ]; then
+            cp -f "assets/ALAS_Logs_Archive-Nuitka-${{ needs.meta.outputs.tag }}/ALAS_Logs_Archive.exe" "release/ALAS_Logs_Archive-Nuitka-${{ needs.meta.outputs.tag }}.exe"
+          fi
+          
+          # 移动和重命名 PyInstaller 构建产物
+          if [ -d "assets/ALAS_Logs_Archive-PyInstaller-${{ needs.meta.outputs.tag }}" ]; then
+            cp -f "assets/ALAS_Logs_Archive-PyInstaller-${{ needs.meta.outputs.tag }}/ALAS_Logs_Archive.exe" "release/ALAS_Logs_Archive-PyInstaller-${{ needs.meta.outputs.tag }}.exe"
+          fi
+          
+          # 复制变更日志
+          if [ -f "assets/updated-code/CHANGELOG.md" ]; then
+            cp -f "assets/updated-code/CHANGELOG.md" "release/CHANGELOG.md"
+          fi
+          
+          # 清理临时目录
+          rm -rf assets
+        shell: bash
+
+      # 发布 Release
+      - name: Publish release to GitHub
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: ${{ needs.meta.outputs.tag }}
+          body_path: release/CHANGELOG.md
+          files: |
+            release/*.exe
+            release/CHANGELOG.md
+          prerelease: ${{ needs.meta.outputs.prerelease != 'false' }}
+          # 为非预发布版本添加 latest 标签
+          tag_names: ${{ needs.meta.outputs.prerelease == 'false' && 'latest' || '' }}
+
+      # 失败时创建 issue
+      - name: Create issue on failure
+        if: failure()
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: "create-issue"
+          title: "Errors occurred during release ${{ needs.meta.outputs.tag }}"
+          body: |
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
