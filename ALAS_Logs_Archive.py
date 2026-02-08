@@ -29,7 +29,7 @@ LZMA_PRESET = 9
 LZMA_DICT_SIZE = 32 * 1024 * 1024
 BZIP2_COMPRESSLEVEL = 9
 CHUNK_SIZE = 8192
-MAX_WORKERS = 4
+MAX_WORKERS = 1
 PROGRESS_UPDATE_INTERVAL = 1
 
 def print_info():
@@ -41,7 +41,7 @@ def print_info():
     print("||" + "".center(60, " ") + "||")
     print("|| " + "".center(58, "-") + " ||")
     print("||" + "".center(60, " ") + "||")
-    print("||" + "Version: v1.0.0    License: WTFPL".center(60, " ") + "||")
+    print("||" + "Version: v1.1.0    License: WTFPL".center(60, " ") + "||")
     print("||" + "".center(60, " ") + "||")
     print("+ " + "".center(60, "=") + " +")
     print("\n")
@@ -147,7 +147,9 @@ def create_default_config(config_path: str) -> None:
         "archive_mode": "overwrite",
         "log_folder": "logs",
         "max_log_files": "15",
-        "log_level": "INFO"
+        "log_level": "INFO",
+        "max_workers": "1",
+        "chunk_size": "8192"
     }
     
     with open(config_path, "w", encoding="utf-8") as f:
@@ -545,10 +547,11 @@ def parse_command_line_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="ALAS 日志归档工具")
     parser.add_argument("-t", "--target", help="目标文件夹路径")
     parser.add_argument("-a", "--archive", help="存档文件夹路径")
-    parser.add_argument("-c", "--compression", help="压缩算法（lzma 或 bzip2）", choices=["lzma", "bzip2"])
-    parser.add_argument("-l", "--level", help="压缩等级（1-9）", type=int, choices=range(1, 10), metavar="1-9")
+    parser.add_argument("-n", "--name", help="存档文件名（必须包含 {date} 占位符）")
+    parser.add_argument("-c", "--compression", help="压缩算法", choices=["lzma", "bzip2"])
+    parser.add_argument("-l", "--level", help="压缩等级", type=int, choices=range(1, 10), metavar="1-9")
     parser.add_argument("-m", "--mode", help="存档模式（覆盖 或 追加）", choices=["overwrite", "append"])
-    parser.add_argument("-w", "--workers", help="最大工作线程数", type=int)
+    parser.add_argument("-w", "--workers", help="多线程设置", type=int)
     return parser.parse_args()
 
 
@@ -567,7 +570,7 @@ def main():
     try:
         target_folder = args.target if args.target else config.get("target_folder", "target")
         archive_folder = args.archive if args.archive else config.get("archive_folder", "archive")
-        archive_name_format = config.get("archive_name_format", "{date}_存档.zip")
+        archive_name_format = args.name if args.name else config.get("archive_name_format", "{date}_存档.zip")
         compression_algorithm = args.compression if args.compression else config.get("compression_algorithm", DEFAULT_COMPRESSION_ALGORITHM)
         compression_level = args.level if args.level else config.get("compression_level", 9)
         archive_mode = args.mode if args.mode else config.get("archive_mode", "overwrite")
