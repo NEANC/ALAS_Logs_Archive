@@ -278,8 +278,6 @@ jobs:
             release/*.exe
             release/CHANGELOG.md
           prerelease: ${{ needs.meta.outputs.prerelease != 'false' }}
-          # 为非预发布版本添加 latest 标签
-          tag_names: ${{ needs.meta.outputs.prerelease == 'false' && 'latest' || '' }}
 
       # 失败时创建 issue
       - name: Create issue on failure
