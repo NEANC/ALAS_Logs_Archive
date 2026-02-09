@@ -33,47 +33,49 @@ python ALAS_Logs_Archive.py
 
 程序支持通过命令行参数覆盖配置文件中的设置：
 
-| 参数            | 短参数 | 说明                                 | 示例                             |
-| --------------- | ------ | ------------------------------------ | -------------------------------- |
-| `--help`        | `-h`   | 显示帮助信息                         | `-h` 或 `--help`                 |
-| `--target`      | `-t`   | 目标文件夹路径                       | `-t "C:\AzurLaneAutoScript\log"` |
-| `--archive`     | `-a`   | 存档文件夹路径                       | `-a "D:\ALAS_Logs"`              |
-| `--name`        | `-n`   | 存档文件名（必须包含 {date} 占位符） | `-n "备份_{date}.zip"`           |
-| `--compression` | `-c`   | 压缩算法                             | `-c lzma` 或 `-c bzip2`          |
-| `--level`       | `-l`   | 压缩等级                             | `-l 9`                           |
-| `--mode`        | `-m`   | 存档模式（覆盖 或 追加）             | `-m overwrite` 或 `-m append`    |
-| `--workers`     | `-w`   | 最大工作线程数                       | `-w 4` 或 `--workers 4`          |
+| 参数            | 短参数 | 说明                             | 示例                              |
+| --------------- | ------ | -------------------------------- | --------------------------------- |
+| `--help`        | `-h`   | 显示帮助信息                     | `-h` 或 `--help`                  |
+| `--target`      | `-t`   | 目标文件夹路径                   | `-t "C:\AzurLaneAutoScript\log"`  |
+| `--archive`     | `-a`   | 存档文件夹路径                   | `-a "D:\ALAS_Logs"`               |
+| `--name`        | `-n`   | 存档文件名（支持 {date} 占位符） | `-n "备份_{date}.zip"`            |
+| `--compression` | `-c`   | 压缩算法                         | `-c lzma` 或 `-c bzip2`           |
+| `--level`       | `-l`   | 压缩等级                         | `-l 9`                            |
+| `--mode`        | `-m`   | 存档模式（滚动 或 增量）         | `-m scroll` 或 `-m incremental`   |
+| `--workers`     | `-w`   | 最大工作线程数                   | `-w 4` 或 `--workers 4`           |
+| `--save-logs`   | `-L`   | 日志文件输出控制                 | `-L false` 或 `--save-logs false` |
 
 **示例：**
 
 ```bash
-python ALAS_Logs_Archive.py -t "C:\AzurLaneAutoScript\log" -a "D:\ALAS_Logs" -c lzma -l 9 -w 4 -m append
+python ALAS_Logs_Archive.py -t "C:\AzurLaneAutoScript\log" -a "D:\ALAS_Logs" -c lzma -l 9 -w 4 -m scroll
 ```
 
 ### 配置文件
 
-| 配置项                  | 说明                                   | 默认值                      |
-| ----------------------- | -------------------------------------- | --------------------------- |
-| `target_folder`         | 目标文件夹路径                         | `X:\AzurLaneAutoScript\log` |
-| `archive_folder`        | 存档文件夹路径                         | `X:\ALAS_Logs`              |
-| `archive_name_format`   | 存档文件名（必须包含 {date} 占位符）） | `{date}_存档.zip`           |
-| `compression_algorithm` | 压缩算法                               | `bzip2`                     |
-| `compression_level`     | 压缩等级                               | `9`                         |
-| `archive_mode`          | 存档模式（覆盖 或 追加）               | `overwrite`                 |
-| `max_workers`           | 最大工作线程数                         | `1`                         |
-| `chunk_size`            | 读取块大小（字节）                     | `8192`                      |
-| `log_folder`            | 程序日志文件夹                         | `logs`                      |
-| `max_log_files`         | 保留的最大日志文件数                   | `15`                        |
-| `log_level`             | 日志等级                               | `INFO`                      |
+| 配置项                  | 说明                                | 默认值                      |
+| ----------------------- | ----------------------------------- | --------------------------- |
+| `target_folder`         | 目标文件夹路径                      | `X:\AzurLaneAutoScript\log` |
+| `archive_folder`        | 存档文件夹路径                      | `X:\ALAS_Logs`              |
+| `archive_name_format`   | 存档文件名（支持 `{date}` 占位符）  | `存档`                      |
+| `compression_algorithm` | 压缩算法（lzma 或 bzip2）           | `bzip2`                     |
+| `compression_level`     | 压缩等级（1-9，数字越大压缩比越高） | `9`                         |
+| `archive_mode`          | 存档模式（滚动 或 增量）            | `scroll`                    |
+| `max_workers`           | 最大工作线程数                      | `1`                         |
+| `chunk_size`            | 读取块大小（字节）                  | `8192`                      |
+| `save_logs`             | 日志文件输出控制                    | `true`                      |
+| `log_folder`            | 程序日志文件夹                      | `logs`                      |
+| `max_log_files`         | 保留的最大日志文件数                | `15`                        |
+| `log_level`             | 日志等级                            | `INFO`                      |
 
 #### 存档模式说明
 
 `archive_mode` 用于控制当日多次运行时的存档行为：
 
-| 模式        | 说明                                     |
-| ----------- | ---------------------------------------- |
-| `append`    | 追加模式，当日多次运行时创建新存档文件   |
-| `overwrite` | 覆盖模式，当日多次运行时覆盖已有存档文件 |
+| 模式          | 说明                                   |
+| ------------- | -------------------------------------- |
+| `scroll`      | 滚动模式，当日多次运行时创建新存档文件 |
+| `incremental` | 增量模式，将文件追加到同一ZIP文件中    |
 
 #### 压缩算法
 
@@ -96,7 +98,7 @@ python ALAS_Logs_Archive.py -t "C:\AzurLaneAutoScript\log" -a "D:\ALAS_Logs" -c 
 
 #### 存档文件名格式
 
-`archive_name_format` 支持自定义存档文件名，使用 `{date}` 占位符表示日期。
+`archive_name_format` 支持自定义存档文件名，使用 `{date}` 占位符表示日期位置。
 
 ---
 

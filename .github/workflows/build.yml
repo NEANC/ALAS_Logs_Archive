@@ -99,9 +99,9 @@ jobs:
       - name: Update version in ALAS_Logs_Archive.py
         run: |
           tag="${{ steps.set_tag.outputs.tag }}"
-          sed -i "s/Version: v[0-9]\+\.[0-9]\+\.[0-9]\+/Version: $tag/g" ALAS_Logs_Archive.py
+          sed -i "s/VERSION = \"v[0-9]\+\.[0-9]\+\.[0-9]\+\"/VERSION = \"$tag\"/g" ALAS_Logs_Archive.py
           echo "Updated version to $tag in ALAS_Logs_Archive.py"
-          cat ALAS_Logs_Archive.py | grep "Version:"
+          cat ALAS_Logs_Archive.py | grep "VERSION ="
 
       # 上传更新后的代码作为 artifact
       - name: Upload updated code
