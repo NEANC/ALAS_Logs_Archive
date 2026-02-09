@@ -31,7 +31,7 @@ BZIP2_COMPRESSLEVEL = 9
 CHUNK_SIZE = 8192
 MAX_WORKERS = 1
 PROGRESS_UPDATE_INTERVAL = 1
-VERSION = "v2.0.0"
+VERSION = "v2.1.0"
 
 def print_info():
     """打印程序的版本和版权信息，发版前手动修改。"""
@@ -141,24 +141,55 @@ def create_default_config(config_path: str) -> None:
     Args:
         config_path: 配置文件路径
     """
-    config = configparser.ConfigParser()
-    config["settings"] = {
-        "target_folder": r"X:\AzurLaneAutoScript\log",
-        "archive_folder": r"X:\ALAS_Logs",
-        "archive_name_format": "存档",
-        "compression_algorithm": "bzip2",
-        "compression_level": "9",
-        "archive_mode": "scroll",
-        "log_folder": "logs",
-        "max_log_files": "15",
-        "log_level": "INFO",
-        "save_logs": "true",
-        "max_workers": "1",
-        "chunk_size": "8192"
-    }
+    # 创建配置文件内容，包含详细注释
+    config_content = """[settings]
+
+# 目标文件夹路径：需要归档的日志文件所在目录
+target_folder = r"X:\AzurLaneAutoScript\log"
+
+# 归档文件夹路径：生成的归档文件保存目录
+archive_folder = r"X:\ALAS_Logs"
+
+# 归档文件名
+# - 增量模式：直接使用该值作为文件名（自动添加 .zip 扩展名）
+# - 滚动模式：如果包含 {date} 占位符会被替换为实际日期，否则在文件名前添加日期前缀
+archive_name_format = "存档"
+
+# 压缩算法：支持的压缩算法
+# bzip2：压缩速度较快，压缩率适中
+# lzma：压缩率较高，压缩速度较慢
+compression_algorithm = "bzip2"
+
+# 压缩等级：压缩算法的压缩等级（1-9）
+compression_level = "9"
+
+# 归档模式：控制归档文件的创建方式
+# scroll：滚动模式，当日多次运行时创建新归档文件
+# incremental：增量模式，将文件追加到同一 ZIP 文件中
+archive_mode = "scroll"
+
+# 最大工作线程数：压缩文件时使用的线程数
+max_workers = "1"
+
+# 读取块大小：文件读写时的块大小（字节）
+chunk_size = "8192"
+
+# 是否保存日志文件：控制是否将程序日志保存到本地文件
+save_logs = "true"
+
+# 日志保存文件夹
+log_folder = "logs"
+
+# 最大日志文件数：保留的程序日志文件的最大数量
+max_log_files = "15"
+
+# 日志等级：程序日志的记录等级
+log_level = "INFO"
+"""
     
+    # 写入配置文件
     with open(config_path, "w", encoding="utf-8") as f:
-        config.write(f)
+        f.write(config_content)
 
 
 def load_config(config_path: str) -> dict:
