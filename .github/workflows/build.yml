@@ -312,16 +312,3 @@ jobs:
             release/*.exe
             release/CHANGELOG.md
           prerelease: ${{ needs.meta.outputs.prerelease != 'false' }}
-
-      # 失败时创建 issue
-      - name: Create issue on failure
-        if: failure()
-        uses: actions-cool/issues-helper@v3
-        with:
-          actions: "create-issue"
-          title: "构建失败: ${{ needs.meta.outputs.tag }}"
-          body: |
-            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          labels: |
-            bug
-            automated
