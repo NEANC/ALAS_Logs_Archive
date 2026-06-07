@@ -52,7 +52,7 @@ class ConfigManager:
         'settings.save_logs': '是否保存日志文件：控制是否将程序日志保存到本地文件',
         'settings.log_folder': '日志保存文件夹',
         'settings.max_log_files': '最大日志文件数：保留的程序日志文件的最大数量',
-        'settings.log_level': '日志等级：程序日志的记录等级',
+        'settings.log_level': '日志等级：控制台输出的日志记录等级',
     }
 
     @classmethod

@@ -60,17 +60,19 @@ def cleanup_old_logs(log_folder: str, max_files: int, logger: Optional[logging.L
 def setup_logger(log_folder: str = "logs", max_log_files: int = 15, log_level: int = logging.INFO, save_logs: bool = True) -> logging.Logger:
     """设置日志记录器
 
+    控制台输出等级由 log_level 参数控制，日志文件始终输出完整记录（含 DEBUG）。
+
     Args:
         log_folder: 日志文件夹路径
         max_log_files: 保留的最大日志文件数量
-        log_level: 日志等级
+        log_level: 控制台日志等级
         save_logs: 是否保存日志文件到本地
 
     Returns:
         logging.Logger: 配置好的日志记录器
     """
     logger = logging.getLogger(__name__)
-    logger.setLevel(log_level)
+    logger.setLevel(logging.DEBUG)
 
     if logger.handlers:
         return logger
@@ -91,7 +93,7 @@ def setup_logger(log_folder: str = "logs", max_log_files: int = 15, log_level: i
         log_file_path = os.path.join(log_folder, log_filename)
 
         file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-        file_handler.setLevel(log_level)
+        file_handler.setLevel(logging.DEBUG)
         file_formatter = logging.Formatter(LOG_FILE_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
