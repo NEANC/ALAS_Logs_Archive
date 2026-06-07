@@ -7,7 +7,8 @@ import os
 import re
 import sys
 from datetime import datetime
-from typing import List
+from pathlib import Path
+from typing import List, Optional, Tuple
 
 from modules.alas_logger_processor import delete_error_folder, delete_gui_files
 from modules.config_manager import CONFIG_FILE, ConfigManager
@@ -109,7 +110,8 @@ def main():
         _handle_decompress(args)
         return
 
-    config_mgr = ConfigManager(CONFIG_FILE)
+    config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
+    config_mgr = ConfigManager(config_path)
     config_mgr.load()
     log_folder = config_mgr.log_folder
     max_log_files = config_mgr.max_log_files
