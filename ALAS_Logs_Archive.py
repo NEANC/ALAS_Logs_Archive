@@ -55,6 +55,29 @@ def get_files_to_archive(target_folder: str, current_date: str, logger: logging.
     return files_to_archive
 
 
+def detect_package_type(logger: Optional[logging.Logger] = None) -> Tuple[bool, str]:
+    """检测当前运行环境是否为打包后的可执行文件
+
+    Args:
+        logger: 日志记录器（可选）
+
+    Returns:
+        (是否为打包后程序, 打包方式名称)
+    """
+    is_pyinstaller = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
+    is_nuitka = hasattr(sys, '__compiled__')
+    is_py_script = sys.argv[0].endswith('.py')
+    is_bundled = not is_py_script or is_pyinstaller or is_nuitka
+
+    package_type = "Nuitka"
+    if is_pyinstaller:
+        package_type = "PyInstaller"
+
+    if logger:
+        logger.debug(f"当前运行模式: {package_type}")
+    return is_bundled, package_type
+
+
 def parse_command_line_args() -> argparse.Namespace:
     """解析命令行参数
 
@@ -126,6 +149,10 @@ def main():
 
     # 日志系统就绪，注入 ConfigManager
     config_mgr.set_logger(logger)
+
+    # 检测运行环境
+    _, package_type = detect_package_type(logger)
+    logger.info(f"运行模式: {package_type}")
 
     try:
         target_folder = args.target if args.target else config_mgr.target_folder
