@@ -13,9 +13,7 @@ from datetime import datetime, timedelta
 from typing import List, Tuple
 
 # 压缩相关硬编码参数
-LZMA_PRESET = 9
 LZMA_DICT_SIZE = 32 * 1024 * 1024
-BZIP2_COMPRESSLEVEL = 9
 
 
 def format_size(size_bytes: int) -> str:

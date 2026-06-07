@@ -4,6 +4,7 @@
 import configparser
 import logging
 import os
+import re
 import sys
 from typing import Optional
 
@@ -11,9 +12,6 @@ from modules.config_migration import apply_migrations
 
 # 硬编码常量，供主入口导入
 CONFIG_FILE = "config.ini"
-DEFAULT_ARCHIVE_MODE = "overwrite"
-MAX_WORKERS = 1
-CHUNK_SIZE = 8192
 
 
 class ConfigManager:
@@ -193,7 +191,6 @@ class ConfigManager:
 
     def _sanitize_config_file(self) -> None:
         """逐行清理损坏行：空键值行删除，无 = 行注释掉"""
-        import re
         try:
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
@@ -428,30 +425,3 @@ class ConfigManager:
 
         self._log('info', "配置验证通过")
         return True
-
-
-def load_config(config_path: str) -> dict:
-    """加载配置文件并返回字典（便捷函数，保持向后兼容）
-
-    Args:
-        config_path: 配置文件路径
-
-    Returns:
-        dict: 配置字典
-    """
-    mgr = ConfigManager(config_path)
-    mgr.load()
-    return {
-        'target_folder': mgr.target_folder,
-        'archive_folder': mgr.archive_folder,
-        'archive_name_format': mgr.archive_name_format,
-        'compression_algorithm': mgr.compression_algorithm,
-        'compression_level': mgr.compression_level,
-        'archive_mode': mgr.archive_mode,
-        'log_folder': mgr.log_folder,
-        'max_log_files': mgr.max_log_files,
-        'log_level': mgr.log_level,
-        'save_logs': mgr.save_logs,
-        'max_workers': mgr.max_workers,
-        'chunk_size': mgr.chunk_size,
-    }
