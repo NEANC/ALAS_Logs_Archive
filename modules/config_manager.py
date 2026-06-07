@@ -21,12 +21,16 @@ class ConfigManager:
         'settings': {
             'target_folder': r'X:\AzurLaneAutoScript\log',
             'archive_folder': r'X:\ALAS_Logs',
+        },
+        'zip': {
             'archive_name_format': '存档',
             'compression_algorithm': 'bzip2',
             'compression_level': '9',
             'archive_mode': 'scroll',
             'max_workers': '1',
             'chunk_size': '8192',
+        },
+        'log': {
             'save_logs': 'true',
             'log_folder': 'logs',
             'max_log_files': '15',
@@ -37,22 +41,22 @@ class ConfigManager:
     _COMMENTS = {
         'settings.target_folder': '目标文件夹路径：需要归档的日志文件所在目录',
         'settings.archive_folder': '归档文件夹路径：生成的归档文件保存目录',
-        'settings.archive_name_format': '归档文件名\n'
-                                         '# - 增量模式：直接使用该值作为文件名（自动添加 .zip 扩展名）\n'
-                                         '# - 滚动模式：如果包含 {date} 占位符会被替换为实际日期，否则在文件名前添加日期前缀',
-        'settings.compression_algorithm': '压缩算法：支持的压缩算法\n'
-                                          '# bzip2：压缩速度较快，压缩率适中\n'
-                                          '# lzma：压缩率较高，压缩速度较慢',
-        'settings.compression_level': '压缩等级：压缩算法的压缩等级（1-9）',
-        'settings.archive_mode': '归档模式：控制归档文件的创建方式\n'
-                                 '# scroll：滚动模式，当日多次运行时创建新归档文件\n'
-                                 '# incremental：增量模式，将文件追加到同一 ZIP 文件中',
-        'settings.max_workers': '最大工作线程数：压缩文件时使用的线程数',
-        'settings.chunk_size': '读取块大小：文件读写时的块大小（字节）',
-        'settings.save_logs': '是否保存日志文件：控制是否将程序日志保存到本地文件',
-        'settings.log_folder': '日志保存文件夹',
-        'settings.max_log_files': '最大日志文件数：保留的程序日志文件的最大数量',
-        'settings.log_level': '日志等级：控制台输出的日志记录等级',
+        'zip.archive_name_format': '归档文件名\n'
+                                   '# - 增量模式：直接使用该值作为文件名（自动添加 .zip 扩展名）\n'
+                                   '# - 滚动模式：如果包含 {date} 占位符会被替换为实际日期，否则在文件名前添加日期前缀',
+        'zip.compression_algorithm': '压缩算法：支持的压缩算法\n'
+                                     '# bzip2：压缩速度较快，压缩率适中\n'
+                                     '# lzma：压缩率较高，压缩速度较慢',
+        'zip.compression_level': '压缩等级：压缩算法的压缩等级（1-9）',
+        'zip.archive_mode': '归档模式：控制归档文件的创建方式\n'
+                            '# scroll：滚动模式，当日多次运行时创建新归档文件\n'
+                            '# incremental：增量模式，将文件追加到同一 ZIP 文件中',
+        'zip.max_workers': '最大工作线程数：压缩文件时使用的线程数',
+        'zip.chunk_size': '读取块大小：文件读写时的块大小（字节）',
+        'log.save_logs': '是否保存日志文件：控制是否将程序日志保存到本地文件',
+        'log.log_folder': '日志保存文件夹',
+        'log.max_log_files': '最大日志文件数：保留的程序日志文件的最大数量',
+        'log.log_level': '日志等级：控制台输出的日志记录等级（日志文件始终记录完整 DEBUG 输出）',
     }
 
     @classmethod
@@ -319,20 +323,25 @@ class ConfigManager:
         if dirty or orphaned:
             self._regenerate_config_file()
 
-        # 解析为属性
+        # 解析各节为属性
+        # [settings]
         self.target_folder = self._get_str('settings', 'target_folder')
         self.archive_folder = self._get_str('settings', 'archive_folder')
-        self.archive_name_format = self._get_str('settings', 'archive_name_format', '存档')
-        self.compression_algorithm = self._get_str('settings', 'compression_algorithm', 'bzip2').lower()
-        self.compression_level = self._get_int('settings', 'compression_level', 9)
-        self.archive_mode = self._get_str('settings', 'archive_mode', 'scroll').lower()
-        self.max_workers = self._get_int('settings', 'max_workers', 1)
-        self.chunk_size = self._get_int('settings', 'chunk_size', 8192)
-        self.save_logs = self._get_bool('settings', 'save_logs', True)
-        self.log_folder = self._get_str('settings', 'log_folder', 'logs')
-        self.max_log_files = self._get_int('settings', 'max_log_files', 15)
 
-        log_level_str = self._get_str('settings', 'log_level', 'INFO').upper()
+        # [zip]
+        self.archive_name_format = self._get_str('zip', 'archive_name_format', '存档')
+        self.compression_algorithm = self._get_str('zip', 'compression_algorithm', 'bzip2').lower()
+        self.compression_level = self._get_int('zip', 'compression_level', 9)
+        self.archive_mode = self._get_str('zip', 'archive_mode', 'scroll').lower()
+        self.max_workers = self._get_int('zip', 'max_workers', 1)
+        self.chunk_size = self._get_int('zip', 'chunk_size', 8192)
+
+        # [log]
+        self.save_logs = self._get_bool('log', 'save_logs', True)
+        self.log_folder = self._get_str('log', 'log_folder', 'logs')
+        self.max_log_files = self._get_int('log', 'max_log_files', 15)
+
+        log_level_str = self._get_str('log', 'log_level', 'INFO').upper()
         log_level_map = {
             'DEBUG': logging.DEBUG,
             'INFO': logging.INFO,
