@@ -54,42 +54,6 @@ def get_files_to_archive(target_folder: str, current_date: str, logger: logging.
     return files_to_archive
 
 
-def validate_compression_level(level: int) -> bool:
-    """验证压缩等级是否有效
-
-    Args:
-        level: 压缩等级
-
-    Returns:
-        bool: 是否有效
-    """
-    return 1 <= level <= 9
-
-
-def validate_compression_algorithm(algorithm: str) -> bool:
-    """验证压缩算法是否有效
-
-    Args:
-        algorithm: 压缩算法
-
-    Returns:
-        bool: 是否有效
-    """
-    return algorithm.lower() in ["lzma", "bzip2"]
-
-
-def validate_archive_mode(mode: str) -> bool:
-    """验证归档模式是否有效
-
-    Args:
-        mode: 归档模式
-
-    Returns:
-        bool: 是否有效
-    """
-    return mode.lower() in ["scroll", "incremental"]
-
-
 def parse_command_line_args() -> argparse.Namespace:
     """解析命令行参数
 
@@ -172,20 +136,15 @@ def main():
         chunk_size = config_mgr.chunk_size
         current_date = datetime.now().strftime("%Y-%m-%d")
 
-        if not validate_compression_algorithm(compression_algorithm):
-            logger.error(f"不支持的压缩算法: {compression_algorithm}")
-            sys.exit(1)
+        # 将 CLI 覆盖值写入 ConfigManager，供 validate() 统一校验
+        config_mgr.target_folder = target_folder
+        config_mgr.archive_folder = archive_folder
+        config_mgr.compression_algorithm = compression_algorithm
+        config_mgr.compression_level = compression_level
+        config_mgr.archive_mode = archive_mode
+        config_mgr.max_workers = max_workers
 
-        if not validate_compression_level(compression_level):
-            logger.error(f"无效的压缩等级: {compression_level}")
-            sys.exit(1)
-
-        if not validate_archive_mode(archive_mode):
-            logger.error(f"无效的归档模式: {archive_mode}")
-            sys.exit(1)
-
-        if max_workers < 1:
-            logger.error(f"无效的工作线程数: {max_workers}")
+        if not config_mgr.validate():
             sys.exit(1)
 
         if not save_logs:

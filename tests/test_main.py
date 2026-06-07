@@ -10,52 +10,7 @@ import tempfile
 
 import pytest
 
-from ALAS_Logs_Archive import (
-    get_files_to_archive,
-    validate_compression_algorithm,
-    validate_compression_level,
-    validate_archive_mode,
-    parse_command_line_args,
-)
-
-
-class TestValidateFunctions:
-    """验证函数测试"""
-
-    @pytest.mark.parametrize("algo,expected", [
-        ("bzip2", True),
-        ("lzma", True),
-        ("BZIP2", True),
-        ("LZMA", True),
-        ("gzip", False),
-        ("zip", False),
-        ("", False),
-    ])
-    def test_validate_compression_algorithm(self, algo, expected):
-        assert validate_compression_algorithm(algo) == expected
-
-    @pytest.mark.parametrize("level,expected", [
-        (1, True),
-        (5, True),
-        (9, True),
-        (0, False),
-        (10, False),
-        (-1, False),
-    ])
-    def test_validate_compression_level(self, level, expected):
-        assert validate_compression_level(level) == expected
-
-    @pytest.mark.parametrize("mode,expected", [
-        ("scroll", True),
-        ("incremental", True),
-        ("SCROLL", True),
-        ("INCREMENTAL", True),
-        ("overwrite", False),
-        ("append", False),
-        ("", False),
-    ])
-    def test_validate_archive_mode(self, mode, expected):
-        assert validate_archive_mode(mode) == expected
+from ALAS_Logs_Archive import get_files_to_archive, parse_command_line_args
 
 
 class TestGetFilesToArchive:
