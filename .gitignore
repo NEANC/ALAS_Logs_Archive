@@ -183,8 +183,11 @@ cython_debug/
 
 # 文件过滤
 *.zip
+*.exe
+*.log
 # AI 生成文档
 gpt*.md
 ds*.md
 # 日志文件夹
 logs/
+log/
