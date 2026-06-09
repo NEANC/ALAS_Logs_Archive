@@ -26,7 +26,7 @@ class ConfigManager:
             'archive_name_format': '存档',
             'compression_algorithm': 'lzma',
             'compression_level': '9',
-            'archive_mode': 'scroll',
+            'archive_mode': 'incremental',
             'max_workers': '1',
             'chunk_size': '8192',
         },
@@ -56,7 +56,7 @@ class ConfigManager:
         'log.save_logs': '是否保存日志文件：控制是否将程序日志保存到本地文件',
         'log.log_folder': '日志保存文件夹',
         'log.max_log_files': '最大日志文件数：保留的程序日志文件的最大数量',
-        'log.log_level': '日志等级：控制台输出的日志记录等级（日志文件始终记录完整 DEBUG 输出）',
+        'log.log_level': '日志等级：控制台输出的日志记录等级（日志文件始终记录完整输出）',
     }
 
     @classmethod
