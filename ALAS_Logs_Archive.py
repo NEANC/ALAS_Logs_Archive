@@ -8,7 +8,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from modules.alas_logger_processor import delete_error_folder, delete_gui_files
 from modules.config_manager import CONFIG_FILE, ConfigManager
@@ -55,11 +55,8 @@ def get_files_to_archive(target_folder: str, current_date: str, logger: logging.
     return files_to_archive
 
 
-def detect_package_type(logger: Optional[logging.Logger] = None) -> Tuple[bool, str]:
+def detect_package_type() -> Tuple[bool, str]:
     """检测当前运行环境是否为打包后的可执行文件
-
-    Args:
-        logger: 日志记录器（可选）
 
     Returns:
         (是否为打包后程序, 打包方式名称)
@@ -73,8 +70,6 @@ def detect_package_type(logger: Optional[logging.Logger] = None) -> Tuple[bool, 
     if is_pyinstaller:
         package_type = "PyInstaller"
 
-    if logger:
-        logger.debug(f"当前运行模式: {package_type}")
     return is_bundled, package_type
 
 
@@ -157,8 +152,8 @@ def main():
     config_mgr.set_logger(logger)
 
     # 检测运行环境
-    _, package_type = detect_package_type(logger)
-    logger.info(f"运行模式: {package_type}")
+    _, package_type = detect_package_type()
+    logger.debug(f"运行模式: {package_type}")
 
     try:
         target_folder = args.target if args.target else config_mgr.target_folder
