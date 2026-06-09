@@ -99,14 +99,15 @@ def parse_command_line_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _handle_decompress(archive_path: str, output_dir: str) -> None:
+def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = False) -> None:
     """处理解压操作
 
     Args:
         archive_path: 归档文件路径（ZIP文件）
         output_dir: 解压输出目录
+        save_logs: 是否保存日志文件
     """
-    logger = setup_logger("logs", 15, logging.INFO, save_logs=False)
+    logger = setup_logger("logs", 15, logging.INFO, save_logs=save_logs)
     logger.info(f"解压模式：归档文件 {archive_path}")
     logger.info(f"输出目录: {output_dir}")
 
@@ -130,13 +131,12 @@ def main():
     # 解压模式：支持三种入口
     #   1. 命令行 -d 显式指定  →  args.decompress + args.output
     #   2. 文件关联/拖放 ZIP   →  args.zipfile (位置参数)
-    if args.decompress:
-        output_dir = args.output if args.output else os.path.splitext(args.decompress)[0]
-        _handle_decompress(args.decompress, output_dir)
-        return
-    if args.zipfile:
-        output_dir = os.path.splitext(args.zipfile)[0]
-        _handle_decompress(args.zipfile, output_dir)
+    if args.decompress or args.zipfile:
+        save_logs_arg = bool(args.save_logs and args.save_logs.lower() == "true")
+
+        archive = args.decompress if args.decompress else args.zipfile
+        output = args.output if args.output else os.path.splitext(archive)[0]
+        _handle_decompress(archive, output, save_logs=save_logs_arg)
         return
 
     config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
