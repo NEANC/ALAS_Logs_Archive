@@ -180,7 +180,12 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
                     zinfo.compress_type = zipfile.ZIP_STORED
                     zipf.writestr(zinfo, compressed_data)
 
-            logger.info(f"{len(duplicate_files)} 个重复文件已保存到新归档文件: {append_archive_path}")
+            dup_original = sum(item[2] for item in duplicate_files)
+            dup_compressed = sum(len(item[1]) for item in duplicate_files)
+            dup_final = os.path.getsize(append_archive_path)
+            dup_ratio = (1 - dup_final / dup_original) * 100 if dup_original > 0 else 0
+            logger.info(f"{len(duplicate_files)} 个重复文件已保存到: {append_archive_path}")
+            logger.info(f"重复文件原始大小: {format_size(dup_original)}，压缩后大小: {format_size(dup_final)}，压缩率: {dup_ratio:.2f}%")
     else:
         # 非增量模式或文件不存在，添加所有文件
         files_to_add = compressed_results
@@ -205,13 +210,14 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
         # 增量模式：只计算新添加文件的压缩率
         added_original_size = sum(result[2] for result in files_to_add)
         added_compressed_size = sum(len(result[1]) for result in files_to_add)
-        compression_ratio = (1 - added_compressed_size / added_original_size) * 100 if added_original_size > 0 else 0
 
         if files_to_add:
-            logger.info(f"新增了 {len(files_to_add)} 个文件到增量归档")
-        logger.info(f"已完成归档，压缩耗时: {elapsed_time:.2f}秒，已保存到: {archive_path}")
-        logger.info(f"新增原始大小: {format_size(added_original_size)}，新增压缩大小: {format_size(added_compressed_size)}，压缩率: {compression_ratio:.2f}%")
-        logger.info(f"归档总大小: {format_size(final_size)}（增加了 {format_size(final_size - existing_size)}）")
+            compression_ratio = (1 - added_compressed_size / added_original_size) * 100 if added_original_size > 0 else 0
+            logger.info(f"新增了 {len(files_to_add)} 个文件到增量归档，已保存到: {archive_path}")
+            logger.info(f"新增原始大小: {format_size(added_original_size)}，新增压缩大小: {format_size(added_compressed_size)}，压缩率: {compression_ratio:.2f}%")
+        else:
+            logger.info(f"无新增文件到增量归档，归档文件未变更: {archive_path}")
+        logger.info(f"压缩总耗时: {elapsed_time:.2f}秒，归档总大小: {format_size(final_size)}")
     else:
         # 滚动模式：计算整体压缩率
         compression_ratio = (1 - final_size / original_size) * 100 if original_size > 0 else 0
