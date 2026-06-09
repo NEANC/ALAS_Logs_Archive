@@ -2,34 +2,42 @@
 > 本项目使用 TRAE IDE 生成与迭代
 
 > [!WARNING]
-> 请注意：由 AI 生成的代码可能有：不可预知的风险和错误！
-> 如您需要直接使用本项目，请**审查并测试后再使用**；
+> 请注意：由 AI 生成的代码可能有：不可预知的风险和错误！  
+> 如您需要直接使用本项目，请**审查并测试后再使用**；  
 > 如您要将本项目引用到其他项目，请**重构后再使用**。
+
+---
 
 # ALAS 日志归档工具
 
 自动归档 AzurLaneAutoScript 日志文件的 Python 工具。
 
+> [!CAUTION]
+> **必须使用本工具解压归档文件**  
+> 常规压缩软件提取得到的是压缩后的二进制乱码  
+
+---
+
+> [!TIP]
+>
+> 1. 可将 ZIP 直接拖放到 exe 上，自动解压到当前目录
+> 2. 增量模式可混合使用不同压缩算法，解压时自动识别
+> 3. 解压时可用 `-L true` 控制日志文件输出
+
 ## 功能特性
 
-- 自动删除历史 `_gui.txt` 日志文件（保留当日文件）
-- 自动删除 `error` 文件夹
-- 将非当日日志文件打包压缩存档
-- 压缩完成后自动删除原始文件
+- 自动删除历史 `_gui.txt` 文件和 `error` 文件夹
+- 将非当日日志文件打包压缩存档并删除原始文件
 - 支持 LZMA / BZIP2 压缩算法
-- 支持高级命令行参数
-- 支持解压归档文件到指定目录
-
-> [!CAUTION]
-> 必须使用该程序解压归档文件  
-> 目前压缩流程：原始文件 → LZMA / BZIP2 压缩 → ZIP_STORED 存入 ZIP  
-> 常规解压缩工具（WinRAR、7-Zip、Windows 资源管理器）提取 ZIP 时，得到的是压缩后的二进制数据，不是原始文件，会导致无法正常读取归档的日志。
+- 支持滚动模式（每次创建新归档）和增量模式（追加到同一 ZIP）
+- 支持解压归档文件（自动识别压缩算法）
+- 支持命令行参数调用并覆盖配置
+- 支持拖放 ZIP 直接解压
+- 压缩流程：`原始文件 → LZMA/BZIP2 压缩 → 压缩后的二进制包 → ZIP 存档`
 
 ## 快速开始
 
-### 运行
-
-首次运行时，程序会自动生成 `config.ini` 配置文件：
+首次运行自动生成 `config.ini`，修改 `target_folder` 和 `archive_folder` 后重新运行即可。
 
 ### 命令行参数
 
@@ -49,17 +57,17 @@
 | `--decompress`  | `-d`   | 解压归档文件（指定ZIP文件路径）  | `-d "D:\ALAS_Logs\存档.zip"`      |
 | `--output`      | `-o`   | 解压输出目录（与 -d 配合使用）   | `-o "E:\ALAS_存档"`               |
 
-> [!TIP]
-> 也支持将归档文件解压直接拖放至 exe 文件，程序会自动解压。
+#### 示例
 
-#### 示例命令
+```powershell
+# 压缩归档
+.\ALAS_Logs_Archive.exe -t "X:\AzurLaneAutoScript\log" -a "X:\ALAS_Logs" -c lzma -l 9 -w 4
 
-```bash
-# 压缩归档文件夹到指定目录
-./ALAS_Logs_Archive.exe -t "C:\AzurLaneAutoScript\log" -a "D:\ALAS_Logs" -c lzma -l 9 -w 4 -m scroll
+# 解压到指定目录
+.\ALAS_Logs_Archive.exe -d "X:\ALAS_Logs\存档.zip" -o "E:\ALAS_存档"
 
-#解压归档文件到指定目录
-./ALAS_Logs_Archive.exe -d "D:\ALAS_Logs\存档.zip" -o "E:\ALAS_存档"
+# 解压并保存日志
+.\ALAS_Logs_Archive.exe -d "存档.zip" -L true
 ```
 
 ### 配置文件
