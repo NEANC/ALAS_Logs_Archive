@@ -95,19 +95,18 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("-L", "--save-logs", help="日志文件输出控制", choices=["true", "false"])
     parser.add_argument("-d", "--decompress", help="解压归档文件（指定ZIP文件路径）")
     parser.add_argument("-o", "--output", help="解压输出目录（与 -d 配合使用，默认为ZIP同目录下同名文件夹）")
+    parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件关联或拖放）")
     return parser.parse_args()
 
 
-def _handle_decompress(args: argparse.Namespace) -> None:
+def _handle_decompress(archive_path: str, output_dir: str) -> None:
     """处理解压操作
 
     Args:
-        args: 命令行参数
+        archive_path: 归档文件路径（ZIP文件）
+        output_dir: 解压输出目录
     """
-    archive_path = args.decompress
-    output_dir = args.output if args.output else os.path.splitext(archive_path)[0]
-
-    logger = setup_logger("logs", 15, logging.INFO, False)
+    logger = setup_logger("logs", 15, logging.INFO, save_logs=False)
     logger.info(f"解压模式：归档文件 {archive_path}")
     logger.info(f"输出目录: {output_dir}")
 
@@ -128,9 +127,16 @@ def main():
 
     print_info()
 
-    # 解压模式：仅通过命令行控制，不依赖配置文件
+    # 解压模式：支持三种入口
+    #   1. 命令行 -d 显式指定  →  args.decompress + args.output
+    #   2. 文件关联/拖放 ZIP   →  args.zipfile (位置参数)
     if args.decompress:
-        _handle_decompress(args)
+        output_dir = args.output if args.output else os.path.splitext(args.decompress)[0]
+        _handle_decompress(args.decompress, output_dir)
+        return
+    if args.zipfile:
+        output_dir = os.path.splitext(args.zipfile)[0]
+        _handle_decompress(args.zipfile, output_dir)
         return
 
     config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
