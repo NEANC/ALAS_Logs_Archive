@@ -18,16 +18,18 @@
 - 压缩完成后自动删除原始文件
 - 支持 LZMA / BZIP2 压缩算法
 - 支持高级命令行参数
+- 支持解压归档文件到指定目录
+
+> [!CAUTION]
+> 必须使用该程序解压归档文件  
+> 目前压缩流程：原始文件 → LZMA / BZIP2 压缩 → ZIP_STORED 存入 ZIP  
+> 常规解压缩工具（WinRAR、7-Zip、Windows 资源管理器）提取 ZIP 时，得到的是压缩后的二进制数据，不是原始文件，会导致无法正常读取归档的日志。
 
 ## 快速开始
 
 ### 运行
 
 首次运行时，程序会自动生成 `config.ini` 配置文件：
-
-```bash
-python ALAS_Logs_Archive.py
-```
 
 ### 命令行参数
 
@@ -44,11 +46,20 @@ python ALAS_Logs_Archive.py
 | `--mode`        | `-m`   | 存档模式（滚动 或 增量）         | `-m scroll` 或 `-m incremental`   |
 | `--workers`     | `-w`   | 最大工作线程数                   | `-w 4` 或 `--workers 4`           |
 | `--save-logs`   | `-L`   | 日志文件输出控制                 | `-L false` 或 `--save-logs false` |
+| `--decompress`  | `-d`   | 解压归档文件（指定ZIP文件路径）  | `-d "D:\ALAS_Logs\存档.zip"`      |
+| `--output`      | `-o`   | 解压输出目录（与 -d 配合使用）   | `-o "E:\ALAS_存档"`               |
 
-**示例：**
+> [!TIP]
+> 也支持将归档文件解压直接拖放至 exe 文件，程序会自动解压。
+
+#### 示例命令
 
 ```bash
-python ALAS_Logs_Archive.py -t "C:\AzurLaneAutoScript\log" -a "D:\ALAS_Logs" -c lzma -l 9 -w 4 -m scroll
+# 压缩归档文件夹到指定目录
+./ALAS_Logs_Archive.exe -t "C:\AzurLaneAutoScript\log" -a "D:\ALAS_Logs" -c lzma -l 9 -w 4 -m scroll
+
+#解压归档文件到指定目录
+./ALAS_Logs_Archive.exe -d "D:\ALAS_Logs\存档.zip" -o "E:\ALAS_存档"
 ```
 
 ### 配置文件
@@ -99,25 +110,6 @@ python ALAS_Logs_Archive.py -t "C:\AzurLaneAutoScript\log" -a "D:\ALAS_Logs" -c 
 #### 存档文件名格式
 
 `archive_name_format` 支持自定义存档文件名，使用 `{date}` 占位符表示日期位置。
-
----
-
-## 本地打包
-
-### 安装 PyInstaller 或 Nuitka
-
-```bash
-pip install pyinstaller
-pip install nuitka
-```
-
-### 打包命令
-
-```bash
-pyinstaller -F -n "ALAS_Logs_Archive" ALAS_Logs_Archive.py
-
-python -m nuitka --standalone --onefile --enable-plugin=anti-bloat --jobs=0 --output-filename=ALAS_Logs_Archive.exe ALAS_Logs_Archive.py
-```
 
 ---
 
