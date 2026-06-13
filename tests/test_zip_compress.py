@@ -99,6 +99,25 @@ class TestCompressFile:
         finally:
             os.unlink(tmp_path)
 
+    def test_compress_zstd(self):
+        """测试 zstd 压缩"""
+        data = b"Hello World! " * 100
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".txt") as f:
+            f.write(data)
+            tmp_path = f.name
+
+        try:
+            name, compressed, orig_size = compress_file(tmp_path, "zstd", 9, 8192)
+            assert name.endswith(".txt")
+            assert orig_size == len(data)
+            assert len(compressed) < len(data)
+            # 验证可以正确解压
+            import zstandard as zstd
+            decompressed = zstd.decompress(compressed)
+            assert decompressed == data
+        finally:
+            os.unlink(tmp_path)
+
     def test_compress_invalid_algorithm(self):
         """测试不支持的压缩算法抛出异常"""
         data = b"test"

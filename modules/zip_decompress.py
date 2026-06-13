@@ -7,6 +7,7 @@ import lzma
 import os
 import sys
 import zipfile
+import zstandard as zstd
 
 
 def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logger) -> None:
@@ -42,18 +43,22 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
         for info in entries:
             compressed_data = zipf.read(info.filename)
 
-            # 自动检测压缩算法并解压：先尝试bzip2，再尝试lzma，都不匹配则视为未压缩
+            # 自动检测压缩算法并解压：zstd → bzip2 → lzma，都不匹配则视为未压缩
             data = None
             try:
-                data = bz2.decompress(compressed_data)
-                logger.debug(f"使用 bzip2 解压: {info.filename}")
+                data = zstd.decompress(compressed_data)
+                logger.debug(f"使用 zstd 解压: {info.filename}")
             except Exception:
                 try:
-                    data = lzma.decompress(compressed_data)
-                    logger.debug(f"使用 lzma 解压: {info.filename}")
+                    data = bz2.decompress(compressed_data)
+                    logger.debug(f"使用 bzip2 解压: {info.filename}")
                 except Exception:
-                    data = compressed_data
-                    logger.debug(f"未检测到压缩，直接提取: {info.filename}")
+                    try:
+                        data = lzma.decompress(compressed_data)
+                        logger.debug(f"使用 lzma 解压: {info.filename}")
+                    except Exception:
+                        data = compressed_data
+                        logger.debug(f"未检测到压缩，直接提取: {info.filename}")
 
             output_path = os.path.join(output_dir, info.filename)
             parent_dir = os.path.dirname(output_path)

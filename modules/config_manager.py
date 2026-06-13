@@ -45,6 +45,7 @@ class ConfigManager:
                                    '# - 增量模式：直接使用该值作为文件名（自动添加 .zip 扩展名）\n'
                                    '# - 滚动模式：如果包含 {date} 占位符会被替换为实际日期，否则在文件名前添加日期前缀',
         'zip.compression_algorithm': '压缩算法：支持的压缩算法\n'
+                                     '# zstd：压缩速度最快，压缩率适中\n'
                                      '# bzip2：压缩速度较快，压缩率适中\n'
                                      '# lzma：压缩率较高，压缩速度较慢',
         'zip.compression_level': '压缩等级：压缩算法的压缩等级（1-9）',
@@ -416,7 +417,7 @@ class ConfigManager:
             self._log('error', "配置错误: archive_folder 未配置")
             return False
 
-        if self.compression_algorithm not in ('bzip2', 'lzma'):
+        if self.compression_algorithm not in ('zstd', 'bzip2', 'lzma'):
             self._log('error', f"配置错误: 不支持的压缩算法 {self.compression_algorithm}")
             return False
 

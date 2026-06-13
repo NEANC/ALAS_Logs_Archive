@@ -8,6 +8,7 @@ import lzma
 import os
 import time
 import zipfile
+import zstandard as zstd
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import List, Tuple
@@ -74,6 +75,8 @@ def compress_file(file_path: str, compression_algorithm: str, compression_level:
         compressed_data = lzma.compress(data, filters=lzma_filters)
     elif compression_algorithm.lower() == "bzip2":
         compressed_data = bz2.compress(data, compresslevel=compression_level)
+    elif compression_algorithm.lower() == "zstd":
+        compressed_data = zstd.ZstdCompressor(level=compression_level).compress(data)
     else:
         raise ValueError(f"不支持的压缩算法: {compression_algorithm}")
 

@@ -116,3 +116,29 @@ class TestDecompressArchive:
             output_file = os.path.join(output_dir, "lzma_file.txt")
             with open(output_file, "rb") as f:
                 assert f.read() == original_content
+
+    def test_decompress_zstd(self):
+        """测试解压含zstd压缩文件的ZIP"""
+        import zstandard as zstd
+        logger = logging.getLogger("test")
+        logger.setLevel(logging.WARNING)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            archive_path = os.path.join(tmpdir, "test.zip")
+            output_dir = os.path.join(tmpdir, "output")
+
+            original_content = b"ZSTD compressed data\n" * 100
+            cctx = zstd.ZstdCompressor(level=9)
+            compressed = cctx.compress(original_content)
+
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_STORED) as zipf:
+                zinfo = zipfile.ZipInfo("zstd_file.txt")
+                zinfo.file_size = len(original_content)
+                zinfo.compress_size = len(compressed)
+                zinfo.compress_type = zipfile.ZIP_STORED
+                zipf.writestr(zinfo, compressed)
+
+            decompress_archive(archive_path, output_dir, logger)
+            output_file = os.path.join(output_dir, "zstd_file.txt")
+            with open(output_file, "rb") as f:
+                assert f.read() == original_content

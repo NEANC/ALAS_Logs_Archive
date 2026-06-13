@@ -84,7 +84,7 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("-t", "--target", help="目标文件夹路径")
     parser.add_argument("-a", "--archive", help="归档文件夹路径")
     parser.add_argument("-m", "--mode", help="归档模式", choices=["scroll", "incremental"])
-    parser.add_argument("-c", "--compression", help="压缩算法", choices=["lzma", "bzip2"])
+    parser.add_argument("-c", "--compression", help="压缩算法", choices=["zstd", "lzma", "bzip2"])
     parser.add_argument("-l", "--level", help="压缩等级", type=int, choices=range(1, 10), metavar="1-9")
     parser.add_argument("-w", "--workers", help="多线程设置", type=int)
     parser.add_argument("-L", "--save-logs", help="日志文件输出控制", choices=["true", "false"])

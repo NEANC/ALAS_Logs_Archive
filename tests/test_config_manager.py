@@ -41,8 +41,10 @@ max_workers = 1
         assert mgr.validate() is True
 
     @pytest.mark.parametrize("algo,valid", [
+        ("zstd", True),
         ("bzip2", True),
         ("lzma", True),
+        ("ZSTD", True),
         ("BZIP2", True),
         ("LZMA", True),
         ("gzip", False),
