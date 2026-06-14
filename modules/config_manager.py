@@ -28,7 +28,6 @@ class ConfigManager:
             'compression_level': '9',
             'archive_mode': 'incremental',
             'max_workers': '1',
-            'chunk_size': '8192',
         },
         'log': {
             'save_logs': 'true',
@@ -53,7 +52,6 @@ class ConfigManager:
                             '# scroll：滚动模式，当日多次运行时创建新归档文件\n'
                             '# incremental：增量模式，将文件追加到同一 ZIP 文件中',
         'zip.max_workers': '最大工作线程数：压缩文件时使用的线程数',
-        'zip.chunk_size': '读取块大小：文件读写时的块大小（字节）',
         'log.save_logs': '是否保存日志文件：控制是否将程序日志保存到本地文件',
         'log.log_folder': '日志保存文件夹',
         'log.max_log_files': '最大日志文件数：保留的程序日志文件的最大数量',
@@ -97,7 +95,6 @@ class ConfigManager:
         self.compression_level = 9
         self.archive_mode = 'scroll'
         self.max_workers = 1
-        self.chunk_size = 8192
         self.save_logs = True
         self.log_folder = 'logs'
         self.max_log_files = 15
@@ -335,7 +332,6 @@ class ConfigManager:
         self.compression_level = self._get_int('zip', 'compression_level', 9)
         self.archive_mode = self._get_str('zip', 'archive_mode', 'scroll').lower()
         self.max_workers = self._get_int('zip', 'max_workers', 1)
-        self.chunk_size = self._get_int('zip', 'chunk_size', 8192)
 
         # [log]
         self.save_logs = self._get_bool('log', 'save_logs', True)

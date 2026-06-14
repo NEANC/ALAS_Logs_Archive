@@ -17,6 +17,9 @@ from modules.version import VERSION, print_info
 from modules.zip_compress import create_archive
 from modules.zip_decompress import decompress_archive
 
+# 1MB，文件读写块大小
+CHUNK_SIZE = 1048576
+
 
 def get_files_to_archive(target_folder: str, current_date: str, logger: logging.Logger) -> List[str]:
     """获取需要打包归档的文件列表
@@ -163,7 +166,7 @@ def main():
         compression_level = args.level if args.level else config_mgr.compression_level
         archive_mode = args.mode if args.mode else config_mgr.archive_mode
         max_workers = args.workers if args.workers else config_mgr.max_workers
-        chunk_size = config_mgr.chunk_size
+        chunk_size = CHUNK_SIZE
         current_date = datetime.now().strftime("%Y-%m-%d")
 
         # 将 CLI 覆盖值写入 ConfigManager，供 validate() 统一校验
