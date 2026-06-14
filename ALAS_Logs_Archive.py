@@ -187,6 +187,12 @@ def main():
         logger.info(f"目标文件夹: {target_folder}")
         logger.info(f"归档文件夹: {archive_folder}")
 
+        # 目标文件夹检查（避免下游函数各自重复打印）
+        if not os.path.exists(target_folder):
+            logger.warning(f"目标文件夹不存在: {target_folder}")
+            logger.info("没有文件需要归档")
+            return
+
         mode_display = "增量" if archive_mode == "incremental" else "滚动"
         logger.info(f"归档模式: {mode_display}")
 
