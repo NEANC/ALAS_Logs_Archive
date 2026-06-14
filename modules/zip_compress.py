@@ -3,6 +3,7 @@
 
 import bz2
 import concurrent.futures
+import io
 import logging
 import lzma
 import os
@@ -228,22 +229,24 @@ def _verify_archive_entries(archive_path: str, all_files: List[str],
                     failed.add(arcname)
                     continue
 
-                # 用 magic bytes 检测算法并试解压
+                # 用 magic bytes 检测算法并试解压（只验证头部可解压出至少 1 字节）
                 if len(head) >= 4 and head[:4] == b'\x28\xB5\x2F\xFD':
                     try:
-                        zstd.ZstdDecompressor().decompress(head)
+                        reader = zstd.ZstdDecompressor().stream_reader(io.BytesIO(head))
+                        reader.read(1)
+                        reader.close()
                     except Exception as e:
                         logger.error(f"ZSTD 解压验证失败 {arcname}: {e}")
                         failed.add(arcname)
                 elif len(head) >= 3 and head[:3] == b'BZh':
                     try:
-                        bz2.decompress(head)
+                        bz2.BZ2Decompressor().decompress(head, max_length=1)
                     except Exception as e:
                         logger.error(f"BZIP2 解压验证失败 {arcname}: {e}")
                         failed.add(arcname)
                 elif len(head) >= 6 and head[:6] == b'\xFD\x37\x7A\x58\x5A\x00':
                     try:
-                        lzma.decompress(head)
+                        lzma.LZMADecompressor().decompress(head, max_length=1)
                     except Exception as e:
                         logger.error(f"LZMA 解压验证失败 {arcname}: {e}")
                         failed.add(arcname)
