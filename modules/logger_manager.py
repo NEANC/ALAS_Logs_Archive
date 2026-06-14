@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 # 日志格式常量
-LOG_FORMAT = "%(levelname)s | %(asctime)s.%(msecs)03d | %(message)s"
+LOG_FORMAT = "%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s"
 LOG_DATE_FORMAT = "%H:%M:%S"
 LOG_FILE_FORMAT = "%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s"
 
