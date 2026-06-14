@@ -21,6 +21,7 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
     直接用常规解压工具提取得到的将是压缩后的乱码数据，
     必须使用本函数才能正确还原。
     单个文件超过 1GB 时自动启用流式解压。
+    包含 Zip Slip 路径穿越防护。
 
     Args:
         archive_path: 归档文件路径（ZIP文件）
@@ -38,6 +39,8 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+    real_output_dir = os.path.realpath(output_dir)
+
     with zipfile.ZipFile(archive_path, "r") as zipf:
         entries = [info for info in zipf.infolist() if not info.filename.endswith("/")]
         total_entries = len(entries)
@@ -46,6 +49,13 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
         extracted_count = 0
         for info in entries:
             output_path = os.path.join(output_dir, info.filename)
+
+            # Zip Slip 路径穿越防护
+            real_output_path = os.path.realpath(output_path)
+            if not real_output_path.startswith(real_output_dir + os.sep):
+                logger.error(f"检测到路径穿越：{info.filename} 被解压到目录之外")
+                sys.exit(1)
+
             parent_dir = os.path.dirname(output_path)
             if parent_dir and not os.path.exists(parent_dir):
                 os.makedirs(parent_dir)
