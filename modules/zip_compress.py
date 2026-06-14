@@ -110,32 +110,6 @@ def compress_file(file_path: str, compression_algorithm: str, compression_level:
     return (os.path.basename(file_path), compressed_data, original_size)
 
 
-def _get_streaming_compressor(compression_algorithm: str, compression_level: int):
-    """获取流式压缩器对象
-
-    Args:
-        compression_algorithm: 压缩算法
-        compression_level: 压缩等级
-
-    Returns:
-        压缩器对象（有 compress/flush 方法）
-    """
-    algo = compression_algorithm.lower()
-    level = _normalize_level(algo, compression_level)
-
-    if algo == "lzma":
-        preset = level % 10
-        if level > 9:
-            preset = preset | lzma.PRESET_EXTREME
-        return lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=preset)
-    elif algo == "bzip2":
-        return bz2.BZ2Compressor(compresslevel=level)
-    elif algo == "zstd":
-        return zstd.ZstdCompressor(level=level, write_checksum=True)
-    else:
-        raise ValueError(f"不支持的压缩算法: {compression_algorithm}")
-
-
 def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
                              compression_level: int, chunk_size: int,
                              zipf: zipfile.ZipFile, logger: logging.Logger) -> Tuple[str, int, int]:
@@ -155,7 +129,8 @@ def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
     Returns:
         (arcname, original_size, compressed_size)
     """
-    compressor = _get_streaming_compressor(compression_algorithm, compression_level)
+    algo = compression_algorithm.lower()
+    level = _normalize_level(algo, compression_level)
     arcname = os.path.basename(file_path)
     original_size = os.path.getsize(file_path)
 
@@ -165,12 +140,36 @@ def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
 
     try:
         with open(file_path, 'rb') as src, open(temp_path, 'wb') as dst:
-            while True:
-                chunk = src.read(chunk_size)
-                if not chunk:
-                    break
-                dst.write(compressor.compress(chunk))
-            dst.write(compressor.flush())
+            if algo == "zstd":
+                cctx = zstd.ZstdCompressor(level=level, write_checksum=True)
+                with cctx.stream_writer(dst) as writer:
+                    while True:
+                        chunk = src.read(chunk_size)
+                        if not chunk:
+                            break
+                        writer.write(chunk)
+            elif algo == "bzip2":
+                cctx = bz2.BZ2Compressor(compresslevel=level)
+                while True:
+                    chunk = src.read(chunk_size)
+                    if not chunk:
+                        break
+                    dst.write(cctx.compress(chunk))
+                dst.write(cctx.flush())
+            elif algo == "lzma":
+                preset = level % 10
+                if level > 9:
+                    preset = preset | lzma.PRESET_EXTREME
+                cctx = lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=preset)
+                while True:
+                    chunk = src.read(chunk_size)
+                    if not chunk:
+                        break
+                    dst.write(cctx.compress(chunk))
+                dst.write(cctx.flush())
+            else:
+                raise ValueError(f"不支持的压缩算法: {compression_algorithm}")
+
 
         compressed_size = os.path.getsize(temp_path)
         zinfo = zipfile.ZipInfo(arcname, time.localtime()[:6])
@@ -229,6 +228,7 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
             logger.error(f"读取现有归档文件失败: {e}")
 
     # 增量模式：过滤掉已在 ZIP 中的重复文件
+    all_files = list(files)  # 保存原始列表，用于校验和删除
     if incremental_mode and existing_files:
         dup_count = sum(1 for f in files if os.path.basename(f) in existing_files)
         if dup_count > 0:
@@ -303,7 +303,7 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
     logger.info(f"压缩总耗时: {elapsed_time:.2f}秒，归档总大小: {format_size(final_size)}")
 
     # 完整性校验：验证本次新增的所有文件均在 ZIP 中
-    expected_names = {os.path.basename(f) for f in files}
+    expected_names = {os.path.basename(f) for f in all_files}
     try:
         with zipfile.ZipFile(archive_path, "r") as verify_zip:
             actual_names = {i.filename for i in verify_zip.infolist() if not i.filename.endswith("/")}
@@ -329,7 +329,7 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
 
     logger.info("完整性校验通过，开始删除原始文件")
     deleted_count = 0
-    for file_path in files:
+    for file_path in all_files:
         if not os.path.exists(file_path):
             continue
         try:

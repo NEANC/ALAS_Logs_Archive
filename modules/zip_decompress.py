@@ -122,12 +122,8 @@ def _decompress_entry_streaming(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,
                     if data:
                         dst.write(data)
                 except EOFError:
-                    # bzip2/lzma 流结束
                     break
-                except Exception as e:
-                    logger.debug(f"流式解压异常: {e}")
-                    break
-            # flush 剩余数据（bzip2/lzma/zstd 都有 flush 方法）
+            # flush 剩余尾部数据
             try:
                 tail = decompressor.flush()
                 if tail:
