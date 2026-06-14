@@ -245,7 +245,7 @@ def _create_archive_streaming(files: List[str], archive_path: str,
 
             with open(file_path, 'rb') as src, open(temp_path, 'wb') as dst:
                 while True:
-                    chunk = src.read(8192)
+                    chunk = src.read(chunk_size)
                     if not chunk:
                         break
                     dst.write(compressor.compress(chunk))
