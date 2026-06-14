@@ -104,7 +104,7 @@ def compress_file(file_path: str, compression_algorithm: str, compression_level:
     elif algo == "bzip2":
         compressed_data = bz2.compress(data, compresslevel=level)
     elif algo == "zstd":
-        compressed_data = zstd.ZstdCompressor(level=level).compress(data)
+        compressed_data = zstd.ZstdCompressor(level=level, write_checksum=True).compress(data)
     else:
         raise ValueError(f"不支持的压缩算法: {compression_algorithm}")
 
@@ -132,7 +132,7 @@ def _get_streaming_compressor(compression_algorithm: str, compression_level: int
     elif algo == "bzip2":
         return bz2.BZ2Compressor(compresslevel=level)
     elif algo == "zstd":
-        return zstd.ZstdCompressor(level=level)
+        return zstd.ZstdCompressor(level=level, write_checksum=True)
     else:
         raise ValueError(f"不支持的压缩算法: {compression_algorithm}")
 
