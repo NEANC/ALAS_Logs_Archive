@@ -93,7 +93,7 @@ def setup_logger(log_folder: str = "logs", max_log_files: int = 15, log_level: i
     Returns:
         logging.Logger: 配置好的日志记录器
     """
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger()  # 根 logger，确保所有模块输出可见
     logger.setLevel(logging.DEBUG)
 
     if logger.handlers:
