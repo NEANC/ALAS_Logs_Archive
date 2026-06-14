@@ -64,16 +64,30 @@ def detect_package_type() -> Tuple[bool, str]:
     Returns:
         (是否为打包后程序, 打包方式名称)
     """
+    # 使用 sys.argv[0] 统一判断源码模式：.py 脚本即为源码运行
+    # 在 PyInstaller/Nuitka 打包后，sys.argv[0] 指向 .exe，不会以 .py 结尾
+    is_py_script = Path(sys.argv[0]).suffix.lower() == '.py'
+    # 兜底：检查打包标识
     is_pyinstaller = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
     is_nuitka = hasattr(sys, '__compiled__')
-    is_py_script = sys.argv[0].endswith('.py')
-    is_bundled = not is_py_script or is_pyinstaller or is_nuitka
 
-    package_type = "Nuitka"
+    is_bundled = (not is_py_script) or is_pyinstaller or is_nuitka
+
+    logger = logging.getLogger(__name__)
+
     if is_pyinstaller:
-        package_type = "PyInstaller"
+        local_package_type = "PyInstaller"
+    elif is_nuitka:
+        local_package_type = "Nuitka"
+    else:
+        local_package_type = "Nuitka"
 
-    return is_bundled, package_type
+    if is_bundled:
+        logger.debug(f"运行环境: {local_package_type}")
+    else:
+        logger.debug(f"运行环境: 源码模式")
+
+    return is_bundled, local_package_type
 
 
 def parse_command_line_args() -> argparse.Namespace:
@@ -155,8 +169,8 @@ def main():
     config_mgr.set_logger(logger)
 
     # 检测运行环境
-    _, package_type = detect_package_type()
-    logger.debug(f"运行模式: {package_type}")
+    detect_package_type()
+    logger.debug(f"版本号: {VERSION}")
 
     try:
         target_folder = args.target if args.target else config_mgr.target_folder
@@ -183,7 +197,6 @@ def main():
         if not save_logs:
             logger.warning("日志仅控制台输出")
 
-        logger.info(f"版本号: {VERSION}")
         logger.info(f"目标文件夹: {target_folder}")
         logger.info(f"归档文件夹: {archive_folder}")
 
