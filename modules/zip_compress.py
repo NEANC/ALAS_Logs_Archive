@@ -299,7 +299,24 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
         files = [f for f in files if os.path.basename(f) not in existing_files]
 
     if not files:
+        # 所有文件均已存在于 ZIP 中，校验后删除原始文件
         logger.info("没有需要归档的新文件")
+        verify_failed = _verify_archive_entries(archive_path, all_files, logger)
+        if verify_failed:
+            logger.error(f"完整性校验失败：{len(verify_failed)} 个文件验证未通过，将保留原始文件")
+            return
+        logger.info("所有文件已存在于归档中，清理原始文件")
+        deleted_count = 0
+        for file_path in all_files:
+            if not os.path.exists(file_path):
+                continue
+            try:
+                os.remove(file_path)
+                logger.debug(f"已删除原始文件: {os.path.basename(file_path)}")
+                deleted_count += 1
+            except Exception as e:
+                logger.error(f"删除文件 {file_path} 失败: {e}")
+        logger.info(f"共删除 {deleted_count} 个原始文件")
         return
 
     # 按文件大小分流
