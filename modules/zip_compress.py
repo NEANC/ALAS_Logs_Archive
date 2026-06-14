@@ -12,7 +12,7 @@ import zipfile
 import zstandard as zstd
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import List, Tuple
+from typing import List, Tuple, Set
 
 # 压缩相关硬编码参数
 # 各算法支持的压缩等级范围
@@ -194,6 +194,66 @@ def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
     return (arcname, original_size, compressed_size)
 
 
+def _verify_archive_entries(archive_path: str, all_files: List[str],
+                             logger: logging.Logger) -> Set[str]:
+    """逐条验证 ZIP 中每个条目可读、可解压
+
+    对每个文件打开 ZIP entry，用 magic bytes 检测算法并试解压头部。
+
+    Args:
+        archive_path: ZIP 文件路径
+        all_files: 本次应归档的源文件路径列表
+        logger: 日志记录器
+
+    Returns:
+        验证失败的文件路径集合（空集表示全部通过）
+    """
+    expected_names = {os.path.basename(f) for f in all_files}
+    failed = set()
+
+    try:
+        with zipfile.ZipFile(archive_path, "r") as vf:
+            actual_names = {i.filename for i in vf.infolist() if not i.filename.endswith("/")}
+            missing = expected_names - actual_names
+            if missing:
+                logger.error(f"完整性校验失败：{len(missing)} 个文件未写入归档: {missing}")
+                return missing
+
+            for arcname in expected_names:
+                try:
+                    with vf.open(arcname) as entry:
+                        head = entry.read(65536)
+                except Exception as e:
+                    logger.error(f"无法读取 ZIP 条目 {arcname}: {e}")
+                    failed.add(arcname)
+                    continue
+
+                # 用 magic bytes 检测算法并试解压
+                if len(head) >= 4 and head[:4] == b'\x28\xB5\x2F\xFD':
+                    try:
+                        zstd.ZstdDecompressor().decompress(head)
+                    except Exception as e:
+                        logger.error(f"ZSTD 解压验证失败 {arcname}: {e}")
+                        failed.add(arcname)
+                elif len(head) >= 3 and head[:3] == b'BZh':
+                    try:
+                        bz2.decompress(head)
+                    except Exception as e:
+                        logger.error(f"BZIP2 解压验证失败 {arcname}: {e}")
+                        failed.add(arcname)
+                elif len(head) >= 6 and head[:6] == b'\xFD\x37\x7A\x58\x5A\x00':
+                    try:
+                        lzma.decompress(head)
+                    except Exception as e:
+                        logger.error(f"LZMA 解压验证失败 {arcname}: {e}")
+                        failed.add(arcname)
+    except Exception as e:
+        logger.error(f"无法打开归档进行完整性校验: {e}")
+        return expected_names  # 全部视为失败
+
+    return failed
+
+
 def create_archive_generic(files: List[str], archive_path: str, compression_algorithm: str, compression_level: int, max_workers: int, chunk_size: int, incremental_mode: bool, logger: logging.Logger) -> None:
     """使用指定压缩算法创建归档文件（统一流水线）
 
@@ -259,6 +319,7 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
     zip_mode = "a" if incremental_mode and os.path.exists(archive_path) else "w"
     total_original = 0
     processed_count = 0
+    failed_files = []  # 记录压缩失败的源文件路径
 
     with zipfile.ZipFile(archive_path, zip_mode, zipfile.ZIP_STORED) as zipf:
 
@@ -282,10 +343,11 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
                         del compressed_data  # 立即释放内存
                     except Exception as e:
                         logger.error(f"压缩文件 {file_path} 失败: {e}")
+                        failed_files.append(file_path)
                     processed_count += 1
                     print(f"\r压缩进度: {processed_count / total_files * 100:.1f}% ({processed_count}/{total_files})", end="", flush=True)
 
-        # 大文件流式压缩直接写入 ZIP（单线程顺序）
+        # 大文件流式压缩（单线程顺序）
         for file_path in large_files:
             try:
                 arcname, orig_size, comp_size = _stream_compress_to_zip(
@@ -293,6 +355,7 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
                 total_original += orig_size
             except Exception as e:
                 logger.error(f"流式压缩文件 {file_path} 失败: {e}")
+                failed_files.append(file_path)
             processed_count += 1
             print(f"\r压缩进度: {processed_count / total_files * 100:.1f}% ({processed_count}/{total_files})", end="", flush=True)
 
@@ -302,17 +365,16 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
     final_size = os.path.getsize(archive_path)
     logger.info(f"压缩总耗时: {elapsed_time:.2f}秒，归档总大小: {format_size(final_size)}")
 
-    # 完整性校验：验证本次新增的所有文件均在 ZIP 中
-    expected_names = {os.path.basename(f) for f in all_files}
-    try:
-        with zipfile.ZipFile(archive_path, "r") as verify_zip:
-            actual_names = {i.filename for i in verify_zip.infolist() if not i.filename.endswith("/")}
-            missing = expected_names - actual_names
-            if missing:
-                logger.error(f"完整性校验失败：{len(missing)} 个文件未写入归档: {missing}，将保留原始文件")
-                return
-    except Exception as e:
-        logger.error(f"完整性校验失败：无法打开归档进行验证: {e}，将保留原始文件")
+    # 如果压缩过程中有文件失败，阻断删除
+    if failed_files:
+        logger.error(f"归档部分失败：{len(failed_files)} 个文件未能写入归档，将保留所有原始文件")
+        logger.error(f"失败文件: {failed_files}")
+        return
+
+    # 完整性校验：逐条验证 ZIP 中每个条目可读、可解压
+    verify_failed = _verify_archive_entries(archive_path, all_files, logger)
+    if verify_failed:
+        logger.critical(f"完整性校验失败：{len(verify_failed)} 个文件验证未通过，将保留原始文件")
         return
 
     # 统计信息
