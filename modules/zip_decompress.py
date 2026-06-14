@@ -9,9 +9,6 @@ import sys
 import zipfile
 import zstandard as zstd
 
-# 流式解压阈值 1GB
-STREAMING_THRESHOLD = 1 * 1024 * 1024 * 1024
-
 
 def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logger) -> None:
     """解压由本工具创建的归档文件
@@ -60,46 +57,15 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
             if parent_dir and not os.path.exists(parent_dir):
                 os.makedirs(parent_dir)
 
-            # 单个文件超过阈值时使用流式解压
-            if info.compress_size > STREAMING_THRESHOLD:
-                logger.info(f"检测到大文件 {info.filename} ({info.compress_size / (1024**3):.2f} GB)，启用流式解压")
-                _decompress_entry_streaming(zipf, info, output_path, logger)
-            else:
-                _decompress_entry_memory(zipf, info, output_path, logger)
+            # 使用流式解压
+            _decompress_entry_streaming(zipf, info, output_path, logger)
 
             extracted_count += 1
             progress = (extracted_count / total_entries) * 100
-            progress_line = f"\r解压进度: {progress:.1f}% ({extracted_count}/{total_entries})"
-            print(progress_line, end="", flush=True)
+            print(f"\r解压进度: {progress:.1f}% ({extracted_count}/{total_entries})", end="", flush=True)
 
     print("\r" + " " * 80 + "\r", end="", flush=True)
     logger.info(f"解压完成，共 {extracted_count} 个文件，输出到: {output_dir}")
-
-
-def _decompress_entry_memory(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,
-                              output_path: str, logger: logging.Logger) -> None:
-    """内存解压：将整个条目读入内存后解压（适用于小文件）"""
-    compressed_data = zipf.read(info.filename)
-
-    # 自动检测压缩算法并解压：zstd → bzip2 → lzma，都不匹配则视为未压缩
-    data = None
-    try:
-        data = zstd.decompress(compressed_data)
-        logger.debug(f"使用 zstd 解压: {info.filename}")
-    except Exception:
-        try:
-            data = bz2.decompress(compressed_data)
-            logger.debug(f"使用 bzip2 解压: {info.filename}")
-        except Exception:
-            try:
-                data = lzma.decompress(compressed_data)
-                logger.debug(f"使用 lzma 解压: {info.filename}")
-            except Exception:
-                data = compressed_data
-                logger.debug(f"未检测到压缩，直接提取: {info.filename}")
-
-    with open(output_path, "wb") as f:
-        f.write(data)
 
 
 def _decompress_entry_streaming(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,
