@@ -5,9 +5,28 @@ import bz2
 import logging
 import lzma
 import os
+import shutil
 import sys
 import zipfile
 import zstandard as zstd
+
+# 压缩算法 magic bytes（6 字节足够区分全部格式）
+ZSTD_MAGIC = b"\x28\xB5\x2F\xFD"
+BZIP2_MAGIC = b"BZh"
+XZ_MAGIC = b"\xFD\x37\x7A\x58\x5A\x00"
+
+CHUNK_SIZE = 131072  # 128KB
+
+
+def _detect_compression_algorithm(magic: bytes) -> str:
+    """通过 magic bytes 检测压缩算法"""
+    if len(magic) >= 4 and magic[:4] == ZSTD_MAGIC:
+        return "zstd"
+    if len(magic) >= 3 and magic[:3] == BZIP2_MAGIC:
+        return "bzip2"
+    if len(magic) >= 6 and magic[:6] == XZ_MAGIC:
+        return "lzma"
+    return "none"
 
 
 def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logger) -> None:
@@ -70,7 +89,10 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
 
 def _decompress_entry_streaming(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,
                                  output_path: str, logger: logging.Logger) -> None:
-    """流式解压：分块读取 ZIP 条目并流式解压写入（适用于 >1GB 的文件）
+    """流式解压：分块读取 ZIP 条目并流式解压写入
+
+    通过 magic bytes 检测压缩算法。
+    ZSTD:  \x28\xB5\x2F\xFD   BZIP2: BZh   XZ: \xFD\x37\x7A\x58\x5A\x00
 
     Args:
         zipf: 已打开的 ZipFile 对象
@@ -78,37 +100,21 @@ def _decompress_entry_streaming(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,
         output_path: 输出文件路径
         logger: 日志记录器
     """
-    # 读取头部 chunk 用于检测压缩算法
+    # 读 magic bytes 检测算法（6 字节）
     with zipf.open(info, 'r') as src:
-        head_chunk = src.read(65536)  # 64KB 头部
+        magic = src.read(6)
+    algo = _detect_compression_algorithm(magic)
+    logger.debug(f"检测到压缩算法: {algo}，文件: {info.filename}")
 
-    # 算法检测
-    algo_name = "none"
-    decompressor = None
-    try:
-        zstd.decompress(head_chunk)
-        decompressor = zstd.ZstdDecompressor()
-        algo_name = "zstd"
-    except Exception:
-        try:
-            bz2.decompress(head_chunk)
-            decompressor = bz2.BZ2Decompressor()
-            algo_name = "bzip2"
-        except Exception:
-            try:
-                lzma.decompress(head_chunk)
-                decompressor = lzma.LZMADecompressor()
-                algo_name = "lzma"
-            except Exception:
-                algo_name = "none"
-
-    logger.debug(f"使用流式 {algo_name} 解压: {info.filename}")
-
+    # 重新打开，流式解压写入
     with zipf.open(info, 'r') as src, open(output_path, 'wb') as dst:
-        if decompressor:
-            # 流式解压：分块读取、解压、写入
+        if algo == "zstd":
+            zstd.ZstdDecompressor().copy_stream(src, dst, read_size=CHUNK_SIZE, write_size=CHUNK_SIZE)
+        elif algo in ("bzip2", "lzma"):
+            decompressor = (bz2.BZ2Decompressor() if algo == "bzip2"
+                            else lzma.LZMADecompressor())
             while True:
-                chunk = src.read(128 * 1024)  # 128KB 块
+                chunk = src.read(CHUNK_SIZE)
                 if not chunk:
                     break
                 try:
@@ -130,8 +136,4 @@ def _decompress_entry_streaming(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,
                 pass
         else:
             # 未压缩：直接流式复制
-            while True:
-                chunk = src.read(128 * 1024)
-                if not chunk:
-                    break
-                dst.write(chunk)
+            shutil.copyfileobj(src, dst, length=CHUNK_SIZE)
