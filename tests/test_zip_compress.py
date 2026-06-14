@@ -7,6 +7,8 @@ import logging
 import os
 import tempfile
 
+import pytest
+
 from modules.zip_compress import format_size, compress_file, create_archive, read_file_chunked
 
 
@@ -99,6 +101,26 @@ class TestCompressFile:
         finally:
             os.unlink(tmp_path)
 
+    @pytest.mark.parametrize("level", [10, 15, 19])
+    def test_compress_lzma_extreme(self, level):
+        """测试 lzma PRESET_EXTREME (10-19) 压缩并验证可解压"""
+        data = b"PRESET_EXTREME test data\n" * 200
+        with tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=".txt") as f:
+            f.write(data)
+            tmp_path = f.name
+
+        try:
+            name, compressed, orig_size = compress_file(tmp_path, "lzma", level, 8192)
+            assert name.endswith(".txt")
+            assert orig_size == len(data)
+            assert len(compressed) < len(data)
+            # 验证可以正确解压
+            import lzma
+            decompressed = lzma.decompress(compressed)
+            assert decompressed == data
+        finally:
+            os.unlink(tmp_path)
+
     def test_compress_zstd(self):
         """测试 zstd 压缩"""
         data = b"Hello World! " * 100
@@ -126,7 +148,6 @@ class TestCompressFile:
             tmp_path = f.name
 
         try:
-            import pytest
             with pytest.raises(ValueError, match="不支持的压缩算法"):
                 compress_file(tmp_path, "gzip", 1, 8192)
         finally:

@@ -16,8 +16,29 @@ from datetime import datetime, timedelta
 from typing import List, Tuple
 
 # 压缩相关硬编码参数
+# 各算法支持的压缩等级范围
+LEVEL_RANGES = {
+    'zstd': (1, 22),
+    'bzip2': (1, 9),
+    'lzma': (0, 19),  # 0-9 常规模式, 10-19 是添加了 PRESET_EXTREME 的 0-9
+}
 # 流式压缩阈值 1GB
 STREAMING_THRESHOLD = 1 * 1024 * 1024 * 1024
+
+
+def _normalize_level(compression_algorithm: str, compression_level: int) -> int:
+    """将用户传入的压缩等级钳位到算法支持的范围内
+
+    Args:
+        compression_algorithm: 压缩算法
+        compression_level: 用户输入的压缩等级
+
+    Returns:
+        int: 钳位后的压缩等级
+    """
+    algo = compression_algorithm.lower()
+    lo, hi = LEVEL_RANGES.get(algo, (1, 9))
+    return max(lo, min(hi, compression_level))
 
 
 def format_size(size_bytes: int) -> str:
@@ -71,12 +92,19 @@ def compress_file(file_path: str, compression_algorithm: str, compression_level:
     data = read_file_chunked(file_path, chunk_size)
     original_size = len(data)
 
-    if compression_algorithm.lower() == "lzma":
-        compressed_data = lzma.compress(data, format=lzma.FORMAT_XZ, preset=compression_level)
-    elif compression_algorithm.lower() == "bzip2":
-        compressed_data = bz2.compress(data, compresslevel=compression_level)
-    elif compression_algorithm.lower() == "zstd":
-        compressed_data = zstd.ZstdCompressor(level=compression_level).compress(data)
+    algo = compression_algorithm.lower()
+    level = _normalize_level(algo, compression_level)
+
+    if algo == "lzma":
+        preset = level % 10
+        kwargs = {'format': lzma.FORMAT_XZ, 'preset': preset}
+        if level > 9:
+            kwargs['preset'] = preset | lzma.PRESET_EXTREME
+        compressed_data = lzma.compress(data, **kwargs)
+    elif algo == "bzip2":
+        compressed_data = bz2.compress(data, compresslevel=level)
+    elif algo == "zstd":
+        compressed_data = zstd.ZstdCompressor(level=level).compress(data)
     else:
         raise ValueError(f"不支持的压缩算法: {compression_algorithm}")
 
@@ -93,12 +121,18 @@ def _get_streaming_compressor(compression_algorithm: str, compression_level: int
     Returns:
         压缩器对象（有 compress/flush 方法）
     """
-    if compression_algorithm.lower() == "lzma":
-        return lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=compression_level)
-    elif compression_algorithm.lower() == "bzip2":
-        return bz2.BZ2Compressor(compresslevel=compression_level)
-    elif compression_algorithm.lower() == "zstd":
-        return zstd.ZstdCompressor(level=compression_level)
+    algo = compression_algorithm.lower()
+    level = _normalize_level(algo, compression_level)
+
+    if algo == "lzma":
+        preset = level % 10
+        if level > 9:
+            preset = preset | lzma.PRESET_EXTREME
+        return lzma.LZMACompressor(format=lzma.FORMAT_XZ, preset=preset)
+    elif algo == "bzip2":
+        return bz2.BZ2Compressor(compresslevel=level)
+    elif algo == "zstd":
+        return zstd.ZstdCompressor(level=level)
     else:
         raise ValueError(f"不支持的压缩算法: {compression_algorithm}")
 

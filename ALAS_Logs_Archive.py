@@ -88,7 +88,7 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("-a", "--archive", help="归档文件夹路径")
     parser.add_argument("-m", "--mode", help="归档模式", choices=["scroll", "incremental"])
     parser.add_argument("-c", "--compression", help="压缩算法", choices=["zstd", "lzma", "bzip2"])
-    parser.add_argument("-l", "--level", help="压缩等级", type=int, choices=range(1, 10), metavar="1-9")
+    parser.add_argument("-l", "--level", help="压缩等级", type=int, choices=range(0, 23), metavar="0-22")
     parser.add_argument("-w", "--workers", help="多线程设置", type=int)
     parser.add_argument("-L", "--save-logs", help="日志文件输出控制", choices=["true", "false"])
     parser.add_argument("-d", "--decompress", help="解压归档文件（指定ZIP文件路径）")
@@ -163,9 +163,9 @@ def main():
         archive_folder = args.archive if args.archive else config_mgr.archive_folder
         archive_name_format = args.name if args.name else config_mgr.archive_name_format
         compression_algorithm = args.compression if args.compression else config_mgr.compression_algorithm
-        compression_level = args.level if args.level else config_mgr.compression_level
+        compression_level = args.level if args.level is not None else config_mgr.compression_level
         archive_mode = args.mode if args.mode else config_mgr.archive_mode
-        max_workers = args.workers if args.workers else config_mgr.max_workers
+        max_workers = args.workers if args.workers is not None else config_mgr.max_workers
         chunk_size = CHUNK_SIZE
         current_date = datetime.now().strftime("%Y-%m-%d")
 

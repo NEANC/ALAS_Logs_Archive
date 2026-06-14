@@ -47,7 +47,9 @@ class ConfigManager:
                                      '# zstd：压缩速度最快，压缩率适中\n'
                                      '# bzip2：压缩速度较快，压缩率适中\n'
                                      '# lzma：压缩率较高，压缩速度较慢',
-        'zip.compression_level': '压缩等级：压缩算法的压缩等级（1-9）',
+        'zip.compression_level': '压缩等级：压缩算法的压缩等级控制\n'
+                                 '# ZSTD 为 1~22，BZIP2 为 1~9，LZMA 为 0~9\n'
+                                 '# LZMA 额外支持 PRESET_EXTREME 参数，填写为 10~19',
         'zip.archive_mode': '归档模式：控制归档文件的创建方式\n'
                             '# scroll：滚动模式，当日多次运行时创建新归档文件\n'
                             '# incremental：增量模式，将文件追加到同一 ZIP 文件中',
@@ -417,8 +419,10 @@ class ConfigManager:
             self._log('error', f"配置错误: 不支持的压缩算法 {self.compression_algorithm}")
             return False
 
-        if not 1 <= self.compression_level <= 9:
-            self._log('error', f"配置错误: 无效的压缩等级 {self.compression_level}")
+        level_ranges = {'zstd': (1, 22), 'bzip2': (1, 9), 'lzma': (0, 19)}
+        lo, hi = level_ranges.get(self.compression_algorithm, (1, 9))
+        if not lo <= self.compression_level <= hi:
+            self._log('error', f"配置错误: {self.compression_algorithm} 压缩等级需在 {lo}-{hi} 之间，当前为 {self.compression_level}")
             return False
 
         if self.archive_mode not in ('scroll', 'incremental'):
