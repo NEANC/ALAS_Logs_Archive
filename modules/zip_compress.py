@@ -218,7 +218,8 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
 
     if use_streaming:
         _create_archive_streaming(files, archive_path, compression_algorithm, compression_level,
-                                   chunk_size, zip_mode=zip_mode, incremental_mode=incremental_mode,
+                                   max_workers, chunk_size,
+                                   zip_mode=zip_mode, incremental_mode=incremental_mode,
                                    existing_files=existing_files, existing_size=existing_size,
                                    logger=logger)
     else:
@@ -257,9 +258,36 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
     logger.info(f"共删除 {deleted_count} 个原始文件")
 
 
+def _compress_file_streaming(file_path: str, compression_algorithm: str,
+                              compression_level: int, chunk_size: int,
+                              temp_dir: str, idx: int,
+                              logger: logging.Logger) -> Tuple[str, int, int, str]:
+    """流式压缩单个文件到临时文件（供线程池调用）
+
+    Returns:
+        (arcname, original_size, compressed_size, temp_path)
+    """
+    compressor = _get_streaming_compressor(compression_algorithm, compression_level)
+    original_size = os.path.getsize(file_path)
+    arcname = os.path.basename(file_path)
+    temp_path = os.path.join(temp_dir, f"{idx:05d}_{arcname}.tmp")
+
+    with open(file_path, 'rb') as src, open(temp_path, 'wb') as dst:
+        while True:
+            chunk = src.read(chunk_size)
+            if not chunk:
+                break
+            dst.write(compressor.compress(chunk))
+        dst.write(compressor.flush())
+
+    compressed_size = os.path.getsize(temp_path)
+    logger.debug(f"已流式压缩文件: {arcname} ({format_size(original_size)} → {format_size(compressed_size)})")
+    return (arcname, original_size, compressed_size, temp_path)
+
+
 def _create_archive_streaming(files: List[str], archive_path: str,
                                compression_algorithm: str, compression_level: int,
-                               chunk_size: int,
+                               max_workers: int, chunk_size: int,
                                zip_mode: str, incremental_mode: bool,
                                existing_files: set, existing_size: int,
                                logger: logging.Logger) -> None:
@@ -270,6 +298,7 @@ def _create_archive_streaming(files: List[str], archive_path: str,
         archive_path: 目标 ZIP 路径
         compression_algorithm: 压缩算法
         compression_level: 压缩等级
+        max_workers: 并发线程数
         chunk_size: 读取块大小
         zip_mode: ZIP 打开模式（"a" 或 "w"）
         incremental_mode: 是否为增量模式
@@ -277,35 +306,32 @@ def _create_archive_streaming(files: List[str], archive_path: str,
         existing_size: 现有 ZIP 大小（字节）
         logger: 日志记录器
     """
-    total = len(files)
     temp_dir = tempfile.mkdtemp(prefix="alas_archive_")
     compressed_tempfiles = []  # [(arcname, original_size, compressed_size, temp_path)]
 
     try:
-        # 第一步：每个文件独立创建压缩器，流式压缩到临时文件
-        for idx, file_path in enumerate(files, 1):
-            if not os.path.exists(file_path):
-                continue
+        # 第一步：线程池并发流式压缩每个文件到临时文件
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {}
+            for idx, file_path in enumerate(files, 1):
+                if not os.path.exists(file_path):
+                    continue
+                futures[executor.submit(
+                    _compress_file_streaming,
+                    file_path, compression_algorithm, compression_level,
+                    chunk_size, temp_dir, idx, logger
+                )] = idx
 
-            compressor = _get_streaming_compressor(compression_algorithm, compression_level)
-            original_size = os.path.getsize(file_path)
-            arcname = os.path.basename(file_path)
-            temp_path = os.path.join(temp_dir, f"{idx:05d}_{arcname}.tmp")
-
-            with open(file_path, 'rb') as src, open(temp_path, 'wb') as dst:
-                while True:
-                    chunk = src.read(chunk_size)
-                    if not chunk:
-                        break
-                    dst.write(compressor.compress(chunk))
-                dst.write(compressor.flush())
-
-            compressed_size = os.path.getsize(temp_path)
-            compressed_tempfiles.append((arcname, original_size, compressed_size, temp_path))
-            logger.debug(f"已流式压缩文件: {arcname} ({format_size(original_size)} → {format_size(compressed_size)})")
-
-            progress = (idx / total) * 100
-            print(f"\r压缩进度: {progress:.1f}% ({idx}/{total})", end="", flush=True)
+            completed = 0
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()
+                    compressed_tempfiles.append(result)
+                except Exception as e:
+                    logger.error(f"流式压缩文件失败: {e}")
+                completed += 1
+                progress = (completed / len(futures)) * 100
+                print(f"\r压缩进度: {progress:.1f}% ({completed}/{len(futures)})", end="", flush=True)
 
         print("\r" + " " * 80 + "\r", end="", flush=True)
 
