@@ -6,7 +6,6 @@ import concurrent.futures
 import logging
 import lzma
 import os
-import shutil
 import tempfile
 import time
 import zipfile
@@ -22,8 +21,8 @@ LEVEL_RANGES = {
     'bzip2': (1, 9),
     'lzma': (0, 19),  # 0-9 常规模式, 10-19 是添加了 PRESET_EXTREME 的 0-9
 }
-# 流式压缩阈值 1GB
-STREAMING_THRESHOLD = 1 * 1024 * 1024 * 1024
+# 单个文件超过此阈值时使用流式压缩直接写入 ZIP
+LARGE_FILE_THRESHOLD = 256 * 1024 * 1024  # 256MB
 
 
 def _normalize_level(compression_algorithm: str, compression_level: int) -> int:
@@ -137,43 +136,79 @@ def _get_streaming_compressor(compression_algorithm: str, compression_level: int
         raise ValueError(f"不支持的压缩算法: {compression_algorithm}")
 
 
-def _append_compressed_to_zip(zipf: zipfile.ZipFile, arcname: str,
-                               temp_path: str, original_size: int,
-                               logger: logging.Logger) -> None:
-    """将已压缩的临时文件以流式方式追加到 ZIP（ZIP_STORED 模式）
+def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
+                             compression_level: int, chunk_size: int,
+                             zipf: zipfile.ZipFile, logger: logging.Logger) -> Tuple[str, int, int]:
+    """流式压缩单个大文件（>256MB）写入 ZIP 条目
+
+    流程：源文件 → 流式压缩到临时文件 → 读取临时文件分块写入 ZIP entry。
+    不在内存中累积完整压缩结果。
 
     Args:
+        file_path: 源文件路径
+        compression_algorithm: 压缩算法
+        compression_level: 压缩等级
+        chunk_size: 读取块大小
         zipf: 已打开的 ZipFile 对象（写模式）
-        arcname: ZIP 中的文件名
-        temp_path: 已压缩的临时文件路径
-        original_size: 原始文件大小
         logger: 日志记录器
-    """
-    compressed_size = os.path.getsize(temp_path)
-    zinfo = zipfile.ZipInfo(arcname, time.localtime()[:6])
-    zinfo.file_size = original_size
-    zinfo.compress_size = compressed_size
-    zinfo.compress_type = zipfile.ZIP_STORED
 
-    with zipf.open(zinfo, 'w') as zip_entry:
-        with open(temp_path, 'rb') as src:
+    Returns:
+        (arcname, original_size, compressed_size)
+    """
+    compressor = _get_streaming_compressor(compression_algorithm, compression_level)
+    arcname = os.path.basename(file_path)
+    original_size = os.path.getsize(file_path)
+
+    # 先用临时文件接收压缩数据以获取压缩后大小（ZipInfo 需要 compress_size）
+    fd, temp_path = tempfile.mkstemp(prefix="alas_large_")
+    os.close(fd)
+
+    try:
+        with open(file_path, 'rb') as src, open(temp_path, 'wb') as dst:
             while True:
-                chunk = src.read(8192)
+                chunk = src.read(chunk_size)
                 if not chunk:
                     break
-                zip_entry.write(chunk)
+                dst.write(compressor.compress(chunk))
+            dst.write(compressor.flush())
 
-    logger.debug(f"已归档文件: {arcname} ({format_size(original_size)} → {format_size(compressed_size)})")
+        compressed_size = os.path.getsize(temp_path)
+        zinfo = zipfile.ZipInfo(arcname, time.localtime()[:6])
+        zinfo.file_size = original_size
+        zinfo.compress_size = compressed_size
+        zinfo.compress_type = zipfile.ZIP_STORED
+
+        with zipf.open(zinfo, 'w') as zip_entry:
+            with open(temp_path, 'rb') as src:
+                while True:
+                    chunk = src.read(8192)
+                    if not chunk:
+                        break
+                    zip_entry.write(chunk)
+    finally:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+
+    logger.debug(f"已流式归档文件: {arcname} ({format_size(original_size)} → {format_size(compressed_size)})")
+    return (arcname, original_size, compressed_size)
 
 
 def create_archive_generic(files: List[str], archive_path: str, compression_algorithm: str, compression_level: int, max_workers: int, chunk_size: int, incremental_mode: bool, logger: logging.Logger) -> None:
-    """使用指定压缩算法创建归档文件
+    """使用指定压缩算法创建归档文件（统一流水线）
+
+    小文件（≤256MB）：ThreadPoolExecutor 并发压缩到内存 → zipf.writestr()
+    大文件（>256MB）：单线程流式压缩到临时文件 → zipf.open() 写入 ZIP entry
+
+    All files are compressed, ZIP is closed, integrity is verified,
+    then source files are deleted atomically.
 
     Args:
         files: 需要归档的文件路径列表
         archive_path: 归档文件路径
         compression_algorithm: 压缩算法（lzma / bzip2 / zstd）
-        compression_level: 压缩等级（1-9）
+        compression_level: 压缩等级
         max_workers: 最大工作线程数
         chunk_size: 读取块大小
         incremental_mode: 是否为增量模式
@@ -193,7 +228,7 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
         except Exception as e:
             logger.error(f"读取现有归档文件失败: {e}")
 
-    # 增量模式：过滤掉已在 ZIP 中的重复文件，只压缩新文件
+    # 增量模式：过滤掉已在 ZIP 中的重复文件
     if incremental_mode and existing_files:
         dup_count = sum(1 for f in files if os.path.basename(f) in existing_files)
         if dup_count > 0:
@@ -204,44 +239,93 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
         logger.info("没有需要归档的新文件")
         return
 
-    total_files = len(files)
+    # 按文件大小分流
+    small_files = []
+    large_files = []
+    for fp in files:
+        if not os.path.exists(fp):
+            continue
+        if os.path.getsize(fp) > LARGE_FILE_THRESHOLD:
+            large_files.append(fp)
+        else:
+            small_files.append(fp)
 
-    # 预扫描文件总大小，决定是否启用流式压缩
-    total_raw_size = sum(os.path.getsize(fp) for fp in files if os.path.exists(fp))
-    use_streaming = total_raw_size > STREAMING_THRESHOLD
-    if use_streaming:
-        logger.info(f"检测到文件总量 {format_size(total_raw_size)} 超过 {format_size(STREAMING_THRESHOLD)}，启用流式压缩")
+    if large_files:
+        logger.info(f"检测到 {len(large_files)} 个大文件（>256MB），将使用流式压缩")
+    total_files = len(small_files) + len(large_files)
     logger.info(f"开始压缩 {total_files} 个文件，使用 {max_workers} 个线程")
 
     start_time = time.time()
     zip_mode = "a" if incremental_mode and os.path.exists(archive_path) else "w"
+    total_original = 0
+    processed_count = 0
 
-    if use_streaming:
-        _create_archive_streaming(files, archive_path, compression_algorithm, compression_level,
-                                   max_workers, chunk_size,
-                                   zip_mode=zip_mode, incremental_mode=incremental_mode,
-                                   existing_files=existing_files, existing_size=existing_size,
-                                   logger=logger)
-    else:
-        _create_archive_memory(files, archive_path, compression_algorithm, compression_level,
-                                max_workers, chunk_size, zip_mode, incremental_mode,
-                                existing_files, existing_size, logger)
+    with zipfile.ZipFile(archive_path, zip_mode, zipfile.ZIP_STORED) as zipf:
+
+        # 并发压缩小文件
+        if small_files:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(compress_file, fp, compression_algorithm, compression_level, chunk_size): fp
+                    for fp in small_files
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    file_path = futures[future]
+                    try:
+                        arcname, compressed_data, orig_size = future.result()
+                        zinfo = zipfile.ZipInfo(arcname, time.localtime()[:6])
+                        zinfo.file_size = orig_size
+                        zinfo.compress_size = len(compressed_data)
+                        zinfo.compress_type = zipfile.ZIP_STORED
+                        zipf.writestr(zinfo, compressed_data)
+                        total_original += orig_size
+                        del compressed_data  # 立即释放内存
+                    except Exception as e:
+                        logger.error(f"压缩文件 {file_path} 失败: {e}")
+                    processed_count += 1
+                    print(f"\r压缩进度: {processed_count / total_files * 100:.1f}% ({processed_count}/{total_files})", end="", flush=True)
+
+        # 大文件流式压缩直接写入 ZIP（单线程顺序）
+        for file_path in large_files:
+            try:
+                arcname, orig_size, comp_size = _stream_compress_to_zip(
+                    file_path, compression_algorithm, compression_level, chunk_size, zipf, logger)
+                total_original += orig_size
+            except Exception as e:
+                logger.error(f"流式压缩文件 {file_path} 失败: {e}")
+            processed_count += 1
+            print(f"\r压缩进度: {processed_count / total_files * 100:.1f}% ({processed_count}/{total_files})", end="", flush=True)
+
+    print("\r" + " " * 80 + "\r", end="", flush=True)
 
     elapsed_time = time.time() - start_time
     final_size = os.path.getsize(archive_path)
     logger.info(f"压缩总耗时: {elapsed_time:.2f}秒，归档总大小: {format_size(final_size)}")
 
-    # 完整性校验：验证归档可打开且条目数一致
-    expected_count = len(files)
+    # 完整性校验：验证本次新增的所有文件均在 ZIP 中
+    expected_names = {os.path.basename(f) for f in files}
     try:
         with zipfile.ZipFile(archive_path, "r") as verify_zip:
-            verify_entries = [i for i in verify_zip.infolist() if not i.filename.endswith("/")]
-            if len(verify_entries) < expected_count:
-                logger.error(f"完整性校验失败：归档中仅有 {len(verify_entries)} 个条目，预期至少 {expected_count} 个，将保留原始文件")
+            actual_names = {i.filename for i in verify_zip.infolist() if not i.filename.endswith("/")}
+            missing = expected_names - actual_names
+            if missing:
+                logger.error(f"完整性校验失败：{len(missing)} 个文件未写入归档: {missing}，将保留原始文件")
                 return
     except Exception as e:
         logger.error(f"完整性校验失败：无法打开归档进行验证: {e}，将保留原始文件")
         return
+
+    # 统计信息
+    if incremental_mode:
+        added_compressed = final_size - existing_size
+        compression_ratio = (1 - added_compressed / total_original) * 100 if total_original > 0 else 0
+        logger.info(f"新增了 {len(files)} 个文件到增量归档，已保存到: {archive_path}")
+        logger.info(f"新增原始大小: {format_size(total_original)}，新增压缩大小: {format_size(added_compressed)}，压缩率: {compression_ratio:.2f}%")
+        logger.info(f"归档总大小: {format_size(final_size)}")
+    else:
+        compression_ratio = (1 - final_size / total_original) * 100 if total_original > 0 else 0
+        logger.info(f"已完成归档，已保存到: {archive_path}")
+        logger.info(f"原始大小: {format_size(total_original)}，压缩后大小: {format_size(final_size)}，压缩率: {compression_ratio:.2f}%")
 
     logger.info("完整性校验通过，开始删除原始文件")
     deleted_count = 0
@@ -256,174 +340,6 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
             logger.error(f"删除文件 {file_path} 失败: {e}")
 
     logger.info(f"共删除 {deleted_count} 个原始文件")
-
-
-def _compress_file_streaming(file_path: str, compression_algorithm: str,
-                              compression_level: int, chunk_size: int,
-                              temp_dir: str, idx: int,
-                              logger: logging.Logger) -> Tuple[str, int, int, str]:
-    """流式压缩单个文件到临时文件（供线程池调用）
-
-    Returns:
-        (arcname, original_size, compressed_size, temp_path)
-    """
-    compressor = _get_streaming_compressor(compression_algorithm, compression_level)
-    original_size = os.path.getsize(file_path)
-    arcname = os.path.basename(file_path)
-    temp_path = os.path.join(temp_dir, f"{idx:05d}_{arcname}.tmp")
-
-    with open(file_path, 'rb') as src, open(temp_path, 'wb') as dst:
-        while True:
-            chunk = src.read(chunk_size)
-            if not chunk:
-                break
-            dst.write(compressor.compress(chunk))
-        dst.write(compressor.flush())
-
-    compressed_size = os.path.getsize(temp_path)
-    logger.debug(f"已流式压缩文件: {arcname} ({format_size(original_size)} → {format_size(compressed_size)})")
-    return (arcname, original_size, compressed_size, temp_path)
-
-
-def _create_archive_streaming(files: List[str], archive_path: str,
-                               compression_algorithm: str, compression_level: int,
-                               max_workers: int, chunk_size: int,
-                               zip_mode: str, incremental_mode: bool,
-                               existing_files: set, existing_size: int,
-                               logger: logging.Logger) -> None:
-    """流式压缩路径：每个文件独立创建压缩器，逐一流式压缩到临时文件后写入 ZIP
-
-    Args:
-        files: 文件路径列表
-        archive_path: 目标 ZIP 路径
-        compression_algorithm: 压缩算法
-        compression_level: 压缩等级
-        max_workers: 并发线程数
-        chunk_size: 读取块大小
-        zip_mode: ZIP 打开模式（"a" 或 "w"）
-        incremental_mode: 是否为增量模式
-        existing_files: ZIP 中已存在的文件名集合
-        existing_size: 现有 ZIP 大小（字节）
-        logger: 日志记录器
-    """
-    temp_dir = tempfile.mkdtemp(prefix="alas_archive_")
-    compressed_tempfiles = []  # [(arcname, original_size, compressed_size, temp_path)]
-
-    try:
-        # 第一步：线程池并发流式压缩每个文件到临时文件
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {}
-            for idx, file_path in enumerate(files, 1):
-                if not os.path.exists(file_path):
-                    continue
-                futures[executor.submit(
-                    _compress_file_streaming,
-                    file_path, compression_algorithm, compression_level,
-                    chunk_size, temp_dir, idx, logger
-                )] = idx
-
-            completed = 0
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    result = future.result()
-                    compressed_tempfiles.append(result)
-                except Exception as e:
-                    logger.error(f"流式压缩文件失败: {e}")
-                completed += 1
-                progress = (completed / len(futures)) * 100
-                print(f"\r压缩进度: {progress:.1f}% ({completed}/{len(futures)})", end="", flush=True)
-
-        print("\r" + " " * 80 + "\r", end="", flush=True)
-
-        # 第二步：写入 ZIP（调用方已过滤重复文件，所有文件都是新的）
-        if compressed_tempfiles:
-            total_original = sum(item[1] for item in compressed_tempfiles)
-            with zipfile.ZipFile(archive_path, zip_mode, zipfile.ZIP_STORED) as zipf:
-                for arcname, orig_size, comp_size, temp_path in compressed_tempfiles:
-                    _append_compressed_to_zip(zipf, arcname, temp_path, orig_size, logger)
-
-            total_final = os.path.getsize(archive_path)
-            compression_ratio = (1 - total_final / total_original) * 100 if total_original > 0 else 0
-            if incremental_mode:
-                logger.info(f"新增了 {len(compressed_tempfiles)} 个文件到增量归档，已保存到: {archive_path}")
-            else:
-                logger.info(f"已完成归档，已保存到: {archive_path}")
-            logger.info(f"原始大小: {format_size(total_original)}，压缩后大小: {format_size(total_final)}，压缩率: {compression_ratio:.2f}%")
-        else:
-            if incremental_mode:
-                logger.info(f"无新增文件到增量归档，归档文件未变更: {archive_path}")
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-def _create_archive_memory(files: List[str], archive_path: str,
-                            compression_algorithm: str, compression_level: int,
-                            max_workers: int, chunk_size: int,
-                            zip_mode: str, incremental_mode: bool,
-                            existing_files: set, existing_size: int,
-                            logger: logging.Logger) -> None:
-    """内存压缩路径：ThreadPoolExecutor 并行压缩到内存，再 writestr 写入 ZIP
-
-    Args:
-        files: 文件路径列表
-        archive_path: 目标 ZIP 路径
-        compression_algorithm: 压缩算法
-        compression_level: 压缩等级
-        max_workers: 线程数
-        chunk_size: 读取块大小
-        zip_mode: ZIP 打开模式
-        incremental_mode: 是否为增量模式
-        existing_files: ZIP 中已存在的文件名集合
-        existing_size: 现有 ZIP 大小（字节）
-        logger: 日志记录器
-    """
-    total_files = len(files)
-    compressed_results = []
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(compress_file, file_path, compression_algorithm, compression_level, chunk_size): file_path
-            for file_path in files
-        }
-
-        completed = 0
-        for future in concurrent.futures.as_completed(futures):
-            file_path = futures[future]
-            try:
-                result = future.result()
-                compressed_results.append(result)
-                logger.debug(f"已压缩文件: {result[0]}")
-            except Exception as e:
-                logger.error(f"压缩文件 {file_path} 失败: {e}")
-            completed += 1
-            progress = (completed / total_files) * 100
-            print(f"\r压缩进度: {progress:.1f}% ({completed}/{total_files})", end="", flush=True)
-
-    print("\r" + " " * 80 + "\r", end="", flush=True)
-
-    if not compressed_results:
-        if incremental_mode:
-            logger.info(f"无新增文件到增量归档，归档文件未变更: {archive_path}")
-        return
-
-    original_size = sum(result[2] for result in compressed_results)
-
-    # 写入主归档
-    with zipfile.ZipFile(archive_path, zip_mode, zipfile.ZIP_STORED) as zipf:
-        for arcname, compressed_data, orig_size in compressed_results:
-            zinfo = zipfile.ZipInfo(arcname, time.localtime()[:6])
-            zinfo.file_size = orig_size
-            zinfo.compress_size = len(compressed_data)
-            zinfo.compress_type = zipfile.ZIP_STORED
-            zipf.writestr(zinfo, compressed_data)
-
-    final_size = os.path.getsize(archive_path)
-    compression_ratio = (1 - final_size / original_size) * 100 if original_size > 0 else 0
-    if incremental_mode:
-        logger.info(f"新增了 {len(compressed_results)} 个文件到增量归档，已保存到: {archive_path}")
-    else:
-        logger.info(f"已完成归档，已保存到: {archive_path}")
-    logger.info(f"原始大小: {format_size(original_size)}，压缩后大小: {format_size(final_size)}，压缩率: {compression_ratio:.2f}%")
 
 
 def create_archive(files: List[str], archive_folder: str, archive_name_format: str, compression_algorithm: str, compression_level: int, archive_mode: str, max_workers: int, chunk_size: int, logger: logging.Logger) -> None:
