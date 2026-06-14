@@ -1,15 +1,37 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
-import logging
 import os
+import logging
+import colorama
 from datetime import datetime
 from typing import Optional
+
 
 # 日志格式常量
 LOG_FORMAT = "%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s"
 LOG_DATE_FORMAT = "%H:%M:%S"
 LOG_FILE_FORMAT = "%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s"
+
+class ColoredConsoleFormatter(logging.Formatter):
+    """带颜色的控制台日志格式化器"""
+
+    LEVEL_COLORS = {
+        'DEBUG': colorama.Fore.CYAN,
+        'INFO': colorama.Fore.WHITE,
+        'WARNING': colorama.Fore.YELLOW,
+        'ERROR': colorama.Fore.RED,
+        'CRITICAL': colorama.Back.RED + colorama.Fore.BLACK + colorama.Style.BRIGHT,
+    }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        colorama.init(autoreset=True)
+
+    def format(self, record: logging.LogRecord) -> str:
+        color = self.LEVEL_COLORS.get(record.levelname, colorama.Fore.WHITE)
+        result = super().format(record)
+        return f"{color}{result}{colorama.Style.RESET_ALL}"
 
 
 def cleanup_old_logs(log_folder: str, max_files: int, logger: Optional[logging.Logger] = None) -> None:
@@ -79,7 +101,7 @@ def setup_logger(log_folder: str = "logs", max_log_files: int = 15, log_level: i
 
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
-    console_formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+    console_formatter = ColoredConsoleFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 

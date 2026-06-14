@@ -1,1 +1,2 @@
 zstandard>=0.22
+colorama>=0.4
