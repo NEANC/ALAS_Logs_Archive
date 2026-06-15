@@ -30,6 +30,9 @@ jobs:
     steps:
       - name: Check-out repository
         uses: actions/checkout@v6
+        with:
+          # workflow_run 使用触发分支，workflow_dispatch 使用选择分支
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
 
       # 检查当前 Python 版本
       - name: Check Python
@@ -101,6 +104,8 @@ jobs:
     steps:
       - name: Check-out repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
 
       # 检查当前 Python 版本
       - name: Check Python
@@ -201,6 +206,8 @@ jobs:
     steps:
       - name: Check-out repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
 
       # 检查当前 Python 版本
       - name: Check Python
