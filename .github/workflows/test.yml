@@ -37,10 +37,15 @@ jobs:
         with:
           python-version: '3.12'
           architecture: 'x64'
-          cache: 'pip'
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
+
+      - name: Restore pip cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ runner.arch }}-py${{ steps.check_python.outputs.python_version || '3.12' }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-${{ runner.arch }}-py${{ steps.check_python.outputs.python_version || '3.12' }}-
+            pip-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install Dependencies
         run: |

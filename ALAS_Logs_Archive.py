@@ -21,6 +21,21 @@ from modules.zip_decompress import decompress_archive
 CHUNK_SIZE = 1048576
 
 
+def setup_utf8_console() -> None:
+    """强制 stdout/stderr 使用 UTF-8 编码"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+    if sys.stdin and hasattr(sys.stdin, "reconfigure"):
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def get_files_to_archive(target_folder: str, current_date: str, logger: logging.Logger) -> List[str]:
     """获取需要打包归档的文件列表
 
@@ -172,6 +187,9 @@ def main():
         max_workers = args.workers if args.workers is not None else 1
     else:
         config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
+        # 打包后的 exe 中 sys.argv[0] 可能指向临时目录，回落检查 CWD
+        if not os.path.exists(config_path) and os.path.exists(os.path.join(os.getcwd(), CONFIG_FILE)):
+            config_path = os.path.join(os.getcwd(), CONFIG_FILE)
         config_mgr = ConfigManager(config_path)
         config_mgr.load()
         log_folder = config_mgr.log_folder
@@ -245,4 +263,5 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_utf8_console()
     main()
