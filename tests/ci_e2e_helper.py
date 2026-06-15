@@ -18,16 +18,18 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # Config
-FILES_PER_DATE = 10
+FILES_PER_DATE_MIN = 10
+FILES_PER_DATE_MAX = 100
 DATES = [
     (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d"),  # day-before-yesterday
     (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"),  # yesterday
     datetime.now().strftime("%Y-%m-%d"),                         # today
     (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),   # tomorrow
 ]
-LARGE_FILE_SIZE = 500 * 1024 * 1024  # 500MB
-SMALL_FILE_MIN = 1024                  # 1KB
-SMALL_FILE_MAX = 512 * 1024            # 512KB
+LARGE_FILE_MIN = 300 * 1024 * 1024   # 300MB
+LARGE_FILE_MAX = 1024 * 1024 * 1024  # 1GB
+SMALL_FILE_MIN = 1 * 1024 * 1024     # 1MB
+SMALL_FILE_MAX = 256 * 1024 * 1024   # 256MB
 ARCHIVE_NAME = "ci_test_archive"
 
 
@@ -58,8 +60,10 @@ def sha256_file(path: str) -> str:
 def generate_test_data(target_dir: str) -> dict:
     """Generate test log files under target_dir.
 
-    Each date gets FILES_PER_DATE .log files (one 500MB) + _gui.txt + notes.txt.
-    Also creates an 'error' folder with a crash.log.
+    Each date gets a random count [FILES_PER_DATE_MIN, FILES_PER_DATE_MAX]
+    of .log files (1 large 300MB-1GB + rest 1MB-256MB),
+    a matching number of _gui.txt files, plus notes.txt.
+    Also creates an 'error' folder.
 
     Returns: {filename: {"sha256": ..., "size": ...}, ...}
     """
@@ -68,37 +72,40 @@ def generate_test_data(target_dir: str) -> dict:
 
     for date_str in DATES:
         prefix = f"{date_str}_"
-        for idx in range(FILES_PER_DATE):
-            size = LARGE_FILE_SIZE if idx == 0 else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
-            filename = f"{prefix}test_{idx:02d}.log"
+        n_files = random.randint(FILES_PER_DATE_MIN, FILES_PER_DATE_MAX)
+        large_idx = random.randint(0, n_files - 1)  # which index gets the large file
+        large_size = random.randint(LARGE_FILE_MIN, LARGE_FILE_MAX)
+
+        for idx in range(n_files):
+            size = large_size if idx == large_idx else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
+            filename = f"{prefix}test_{idx:03d}.log"
             path = os.path.join(target_dir, filename)
             with open(path, "wb") as f:
                 f.write(random_content(size))
             manifest[filename] = {"sha256": sha256_file(path), "size": size}
 
-        gui_name = f"{prefix}test_gui.txt"
-        path = os.path.join(target_dir, gui_name)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("".join(random.choice(string.ascii_letters) for _ in range(1024)))
-        manifest[gui_name] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+        # matching number of _gui.txt files
+        for idx in range(n_files):
+            gui_name = f"{prefix}test_{idx:03d}_gui.txt"
+            path = os.path.join(target_dir, gui_name)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("".join(random.choice(string.ascii_letters) for _ in range(1024)))
+            manifest[gui_name] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
+        # extra notes.txt
         txt_name = f"{prefix}notes.txt"
         path = os.path.join(target_dir, txt_name)
         with open(path, "w", encoding="utf-8") as f:
             f.write("test notes\n" * 100)
         manifest[txt_name] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
-    error_dir = os.path.join(target_dir, "error")
-    os.makedirs(error_dir, exist_ok=True)
-    err_file = os.path.join(error_dir, "crash.log")
-    with open(err_file, "wb") as f:
-        f.write(b"ERROR CONTENT\n" * 100)
+    _make_error_folder(target_dir)
 
     log(f"Test data generated: {target_dir}  ({len(manifest)} files)")
     return manifest
 
 
-def run_archive(args: list, cwd: str = None, timeout: int = 1800) -> subprocess.CompletedProcess:
+def run_archive(args: list, cwd: str = None, timeout: int = 1800, stdin: bytes = None) -> subprocess.CompletedProcess:
     """Run archive subprocess and print its output."""
     log(f"Run: {' '.join(args)}")
     result = subprocess.run(
@@ -106,6 +113,7 @@ def run_archive(args: list, cwd: str = None, timeout: int = 1800) -> subprocess.
         cwd=cwd or os.getcwd(),
         capture_output=True,
         timeout=timeout,
+        input=stdin,
     )
     # Write stdout/stderr to console bypassing Python's encoding layer
     # (sys.stdout uses cp1252 on Windows CI runners, which chokes on UTF-8)
@@ -152,8 +160,18 @@ def _generate_small_test_set(target_dir: str) -> dict:
         with open(path, "wb") as f:
             f.write(random_content(size))
         manifest[fn] = {"sha256": sha256_file(path), "size": size}
+    _make_error_folder(target_dir)
     log(f"Small test data generated: {target_dir} ({len(manifest)} files)")
     return manifest
+
+
+def _make_error_folder(target_dir: str) -> None:
+    """Create a mock error folder with a crash log."""
+    error_dir = os.path.join(target_dir, "error")
+    os.makedirs(error_dir, exist_ok=True)
+    err_file = os.path.join(error_dir, "crash.log")
+    with open(err_file, "wb") as f:
+        f.write(b"ERROR CONTENT\n" * 100)
 
 
 def _write_config_ini(path: str, target_dir: str, archive_dir: str) -> None:
@@ -177,6 +195,14 @@ log_level = INFO
 """
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
+
+
+def _make_zip_slip_zip(path: str) -> None:
+    """Create a malicious ZIP with a ../ path traversal entry (Zip Slip test)."""
+    import zipfile
+    info = zipfile.ZipInfo("../escaped.txt")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as zf:
+        zf.writestr(info, b"ESCAPED CONTENT\n")
 
 
 def main():
@@ -215,7 +241,7 @@ def main():
         "-n", ARCHIVE_NAME,
         "-m", "scroll",
         "-c", "zstd",
-        "-l", "3",
+        "-l", "15",
         "-w", "4",
         "-L", "false",
     ])
@@ -259,26 +285,49 @@ def main():
 
     shutil.rmtree(target_dir, ignore_errors=True)
     os.makedirs(target_dir, exist_ok=True)
-    batch_size = FILES_PER_DATE // 2
+    _make_error_folder(target_dir)
     all_manifest = {}
 
     yesterday = DATES[1]
     prefix = f"{yesterday}_"
+    total_files = random.randint(FILES_PER_DATE_MIN, FILES_PER_DATE_MAX)
+    large_idx = random.randint(0, total_files - 1)
+    large_size = random.randint(LARGE_FILE_MIN, LARGE_FILE_MAX)
+    batch1_end = total_files // 2
+    batch2_end = total_files
 
-    # Batch 1: zstd
-    for idx in range(batch_size):
-        size = LARGE_FILE_SIZE if idx == 0 else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
-        fn = f"{prefix}test_{idx:02d}.log"
+    # Batch 1: zstd (first half)
+    for idx in range(batch1_end):
+        size = large_size if idx == large_idx else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
+        fn = f"{prefix}test_{idx:03d}.log"
         path = os.path.join(target_dir, fn)
         with open(path, "wb") as f:
             f.write(random_content(size))
         all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
 
-    fn = f"{prefix}test_gui.txt"
-    path = os.path.join(target_dir, fn)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("A" * 2048)
-    all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+    inc_archive = os.path.join(archive_dir, "inc_archive.zip")
+    run_archive(cmd_base + [
+        "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
+        "-m", "incremental", "-c", "zstd", "-l", "15", "-w", "4", "-L", "false",
+    ])
+    log("Incremental batch 1 (zstd) done")
+
+    # Batch 2: lzma (second half) + gui + notes
+    for idx in range(batch1_end, batch2_end):
+        size = large_size if idx == large_idx else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
+        fn = f"{prefix}test_{idx:03d}.log"
+        path = os.path.join(target_dir, fn)
+        with open(path, "wb") as f:
+            f.write(random_content(size))
+        all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
+
+    # gui files
+    for idx in range(total_files):
+        fn = f"{prefix}test_{idx:03d}_gui.txt"
+        path = os.path.join(target_dir, fn)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("A" * 1536)
+        all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
     fn = f"{prefix}notes.txt"
     path = os.path.join(target_dir, fn)
@@ -286,25 +335,9 @@ def main():
         f.write("B" * 2048)
     all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
-    inc_archive = os.path.join(archive_dir, "inc_archive.zip")
     run_archive(cmd_base + [
         "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
-        "-m", "incremental", "-c", "zstd", "-l", "3", "-w", "4", "-L", "false",
-    ])
-    log("Incremental batch 1 (zstd) done")
-
-    # Batch 2: lzma
-    for idx in range(batch_size, FILES_PER_DATE):
-        size = random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
-        fn = f"{prefix}test_{idx:02d}.log"
-        path = os.path.join(target_dir, fn)
-        with open(path, "wb") as f:
-            f.write(random_content(size))
-        all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
-
-    run_archive(cmd_base + [
-        "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
-        "-m", "incremental", "-c", "lzma", "-l", "3", "-w", "4", "-L", "false",
+        "-m", "incremental", "-c", "lzma", "-l", "19", "-w", "4", "-L", "false",
     ])
     log("Incremental batch 2 (lzma) done")
 
@@ -312,17 +345,27 @@ def main():
     # Batch 3: bzip2 (tomorrow date)
     tomorrow_str = DATES[3]
     tp = f"{tomorrow_str}_"
-    for idx in range(FILES_PER_DATE):
-        size = LARGE_FILE_SIZE if idx == 0 else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
-        fn = f"{tp}test_{idx:02d}.log"
+    n3 = random.randint(FILES_PER_DATE_MIN, FILES_PER_DATE_MAX)
+    large_idx3 = random.randint(0, n3 - 1)
+    large_size3 = random.randint(LARGE_FILE_MIN, LARGE_FILE_MAX)
+    for idx in range(n3):
+        size = large_size3 if idx == large_idx3 else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
+        fn = f"{tp}test_{idx:03d}.log"
         path = os.path.join(target_dir, fn)
         with open(path, "wb") as f:
             f.write(random_content(size))
         all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
 
+    for idx in range(n3):
+        fn = f"{tp}test_{idx:03d}_gui.txt"
+        path = os.path.join(target_dir, fn)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("C" * 1536)
+        all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+
     run_archive(cmd_base + [
         "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
-        "-m", "incremental", "-c", "bzip2", "-l", "3", "-w", "4", "-L", "false",
+        "-m", "incremental", "-c", "bzip2", "-l", "9", "-w", "4", "-L", "false",
     ])
     log("Incremental batch 3 (bzip2) done")
 
@@ -368,7 +411,7 @@ def main():
     run_archive(cmd_base + [
         "-m", "scroll",
         "-c", "zstd",
-        "-l", "3",
+        "-l", "15",
         "-w", "4",
         "-L", "false",
     ])
@@ -391,6 +434,121 @@ def main():
     if not verify_decompression(cfg_out, cfg_manifest):
         sys.exit(1)
     log("Phase 4: Config-file-driven mode passed")
+
+    # Phase 5: LZMA level 9 scroll mode
+    log("=" * 50)
+    log("Phase 5: LZMA level 9 scroll mode")
+    log("=" * 50)
+
+    shutil.rmtree(target_dir, ignore_errors=True)
+    os.makedirs(target_dir, exist_ok=True)
+    _make_error_folder(target_dir)
+
+    lzma_manifest = {}
+    lzma_prefix = f"{DATES[1]}_"
+    n_lzma = random.randint(FILES_PER_DATE_MIN, FILES_PER_DATE_MAX)
+    for idx in range(n_lzma):
+        size = random.randint(SMALL_FILE_MIN, LARGE_FILE_MIN)
+        fn = f"{lzma_prefix}test_{idx:03d}.log"
+        path = os.path.join(target_dir, fn)
+        with open(path, "wb") as f:
+            f.write(random_content(size))
+        lzma_manifest[fn] = {"sha256": sha256_file(path), "size": size}
+    for idx in range(n_lzma):
+        fn = f"{lzma_prefix}test_{idx:03d}_gui.txt"
+        path = os.path.join(target_dir, fn)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("D" * 1536)
+        lzma_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+
+    lzma_arcdir = os.path.join(archive_dir, "lzma_scroll")
+    os.makedirs(lzma_arcdir, exist_ok=True)
+    run_archive(cmd_base + [
+        "-t", target_dir, "-a", lzma_arcdir,
+        "-n", "lzma9_test",
+        "-m", "scroll", "-c", "lzma",
+        "-l", "9", "-w", "4", "-L", "false",
+    ])
+    lzma_zips = sorted(Path(lzma_arcdir).glob("*.zip"))
+    if not lzma_zips:
+        log("FAIL: LZMA level 9 did not create archive")
+        sys.exit(1)
+    lzma_out = decompress_dir + "_lzma9"
+    os.makedirs(lzma_out, exist_ok=True)
+    for z in lzma_zips:
+        run_archive(cmd_base + ["-d", str(z), "-o", lzma_out, "-L", "false"])
+    if not verify_decompression(lzma_out, lzma_manifest):
+        sys.exit(1)
+    log("Phase 5: LZMA level 9 passed")
+
+    # Phase 6: Zip Slip path traversal protection
+    log("=" * 50)
+    log("Phase 6: Zip Slip path traversal protection")
+    log("=" * 50)
+
+    zip_slip_zip = os.path.join(archive_dir, "zip_slip_test.zip")
+    _make_zip_slip_zip(zip_slip_zip)
+
+    # Sub-test A: no stdin → EOFError → auto-reject → exit code 1
+    slip_out_a = decompress_dir + "_slip_a"
+    os.makedirs(slip_out_a, exist_ok=True)
+    result_a = run_archive(cmd_base + ["-d", zip_slip_zip, "-o", slip_out_a, "-L", "false"])
+    if result_a.returncode != 1:
+        log(f"FAIL (A): path traversal not blocked when stdin absent, exit code {result_a.returncode}")
+        sys.exit(1)
+    if os.path.exists(os.path.join(slip_out_a, "escaped.txt")):
+        log("FAIL (A): path traversal file was extracted when stdin absent")
+        sys.exit(1)
+    log("Phase 6A: Auto-reject (no stdin) passed")
+
+    # Sub-test B: pipe "y\n" → user confirms → exit code 0
+    slip_out_b = decompress_dir + "_slip_b"
+    os.makedirs(slip_out_b, exist_ok=True)
+    result_b = run_archive(cmd_base + ["-d", zip_slip_zip, "-o", slip_out_b, "-L", "false"],
+                           stdin=b"y\n")
+    if result_b.returncode != 0:
+        log(f"FAIL (B): confirmed path traversal not allowed, exit code {result_b.returncode}")
+        sys.exit(1)
+    escaped = os.path.realpath(os.path.join(slip_out_b, "..", "escaped.txt"))
+    if not os.path.isfile(escaped):
+        log(f"FAIL (B): path traversal file not extracted after user confirmation")
+        sys.exit(1)
+    with open(escaped, "rb") as f:
+        if f.read().strip() != b"ESCAPED CONTENT":
+            log("FAIL (B): extracted file content mismatch")
+            sys.exit(1)
+    try:
+        os.unlink(escaped)
+    except OSError:
+        pass
+    log("Phase 6B: User-confirmed (y) passed")
+
+    # Sub-test C: pipe "\ny\n" → empty → re-prompt → y → exit 0
+    slip_out_c = decompress_dir + "_slip_c"
+    os.makedirs(slip_out_c, exist_ok=True)
+    result_c = run_archive(cmd_base + ["-d", zip_slip_zip, "-o", slip_out_c, "-L", "false"],
+                           stdin=b"\ny\n")
+    if result_c.returncode != 0:
+        log(f"FAIL (C): empty-then-y not allowed, exit code {result_c.returncode}")
+        sys.exit(1)
+    escaped = os.path.realpath(os.path.join(slip_out_c, "..", "escaped.txt"))
+    try:
+        os.unlink(escaped)
+    except OSError:
+        pass
+    log("Phase 6C: Empty-input retry passed")
+
+    # Sub-test D: pipe "no\n" → user rejects → exit code 1
+    slip_out_d = decompress_dir + "_slip_d"
+    os.makedirs(slip_out_d, exist_ok=True)
+    result_d = run_archive(cmd_base + ["-d", zip_slip_zip, "-o", slip_out_d, "-L", "false"],
+                           stdin=b"no\n")
+    if result_d.returncode != 1:
+        log(f"FAIL (D): n/no reject not honored, exit code {result_d.returncode}")
+        sys.exit(1)
+    log("Phase 6D: User-reject (no) passed")
+
+    log("Phase 6: Zip Slip protection passed")
 
     log("=" * 50)
     log("ALL E2E TESTS PASSED")

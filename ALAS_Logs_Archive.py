@@ -122,7 +122,7 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("-L", "--save-logs", help="日志文件输出控制", choices=["true", "false"])
     parser.add_argument("-d", "--decompress", help="解压归档文件（指定ZIP文件路径）")
     parser.add_argument("-o", "--output", help="解压输出目录（与 -d 配合使用，默认为ZIP同目录下同名文件夹）")
-    parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件关联或拖放）")
+    parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件拖放）")
     return parser.parse_args()
 
 
@@ -135,8 +135,8 @@ def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = Fal
         save_logs: 是否保存日志文件
     """
     logger = setup_logger("logs", 15, logging.INFO, save_logs=save_logs)
-    logger.info(f"解压模式：归档文件 {archive_path}")
-    logger.info(f"输出目录: {output_dir}")
+    logger.info(f"解压归档文件： {archive_path}")
+    logger.info(f"解压到目录: {output_dir}")
 
     try:
         decompress_archive(archive_path, output_dir, logger)

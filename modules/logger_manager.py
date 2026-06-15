@@ -73,7 +73,7 @@ def cleanup_old_logs(log_folder: str, max_files: int, logger: Optional[logging.L
             deleted_count += 1
         except Exception as e:
             if logger:
-                logger.error(f"删除日志文件 {os.path.basename(file_path)} 失败: {e}")
+                logger.error(f"删除日志文件: {os.path.basename(file_path)} 失败: {e}")
 
     if logger and deleted_count > 0:
         logger.info(f"已清理 {deleted_count} 个日志文件")
