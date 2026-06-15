@@ -39,7 +39,7 @@ def delete_gui_files(target_folder: str, current_date: str, logger: logging.Logg
         except Exception as e:
             logger.error(f"删除文件 {filename} 失败: {e}")
 
-    logger.info(f"共删除 {deleted_count} 个 gui.txt 文件")
+    logger.info(f"共删除 {deleted_count} 个 gui 文件")
 
 
 def delete_error_folder(target_folder: str, logger: logging.Logger) -> None:

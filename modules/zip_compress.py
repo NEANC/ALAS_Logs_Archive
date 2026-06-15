@@ -331,7 +331,7 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
             small_files.append(fp)
 
     if large_files:
-        logger.info(f"检测到 {len(large_files)} 个大文件（>256MB），将使用流式压缩")
+        logger.info(f"检测到 {len(large_files)} 个大文件（>256MB），将对其使用流式压缩")
     total_files = len(small_files) + len(large_files)
     logger.info(f"开始压缩 {total_files} 个文件，使用 {max_workers} 个线程")
 
@@ -461,7 +461,7 @@ def create_archive(files: List[str], archive_folder: str, archive_name_format: s
         if os.path.exists(archive_path):
             logger.info(f"增量模式：追加到现有归档文件: {archive_filename}")
         else:
-            logger.info(f"增量模式：创建新归档文件: {archive_filename}")
+            logger.info(f"未找到现有归档文件，将创建新归档文件: {archive_filename}")
     else:  # scroll 模式
         # 滚动模式：使用年-月-日作为前缀
         base_name = archive_name_format
