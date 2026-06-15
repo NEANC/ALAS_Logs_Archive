@@ -19,8 +19,8 @@ def delete_gui_files(target_folder: str, current_date: str, logger: logging.Logg
         logger.warning(f"目标文件夹不存在: {target_folder}")
         return
 
-    gui_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}_gui\.txt$")
-    current_date_pattern = re.compile(rf"^{re.escape(current_date)}_gui\.txt$")
+    gui_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}_gui\b")
+    current_date_pattern = re.compile(rf"^{re.escape(current_date)}_gui\b")
     deleted_count = 0
 
     for filename in os.listdir(target_folder):
