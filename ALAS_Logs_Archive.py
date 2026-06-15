@@ -21,6 +21,21 @@ from modules.zip_decompress import decompress_archive
 CHUNK_SIZE = 1048576
 
 
+def setup_utf8_console() -> None:
+    """强制 stdout/stderr 使用 UTF-8 编码"""
+    for stream in (sys.stdout, sys.stderr):
+        if stream and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+    if sys.stdin and hasattr(sys.stdin, "reconfigure"):
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def get_files_to_archive(target_folder: str, current_date: str, logger: logging.Logger) -> List[str]:
     """获取需要打包归档的文件列表
 
@@ -248,4 +263,5 @@ def main():
 
 
 if __name__ == "__main__":
+    setup_utf8_console()
     main()
