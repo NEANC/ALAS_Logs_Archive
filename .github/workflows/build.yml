@@ -1,4 +1,4 @@
-name: 统一构建并发布
+name: Build
 
 on:
   push:
@@ -177,7 +177,7 @@ jobs:
           output-dir: build
           no-deployment-flag: self-execution
           msvc: latest
-          nofollow-import-to: '*.tests *.pytest *.unittest *.distutils *.setuptools *.pip *.tkinter *.email.mime *.http.server *.xmlrpc *.pydoc *.idlelib *.multiprocessing *.ctypes.test *.lib2to3 *.wsgiref *.ensurepip *.venv *.turtle *.turtledemo'
+          nofollow-import-to: '*.tests *.pytest *.unittest *.distutils *.setuptools *.pip *.tkinter *.email.mime *.http.server *.xmlrpc *.pydoc *.idlelib *.multiprocessing *.ctypes.test *.lib2to3 *.wsgiref *.ensurepip *.venv *.turtle *.turtledemo colorama.tests'
           lto: "yes"
           enable-plugins: upx
           upx-binary: upx

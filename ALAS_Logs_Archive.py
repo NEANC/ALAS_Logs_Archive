@@ -17,6 +17,9 @@ from modules.version import VERSION, print_info
 from modules.zip_compress import create_archive
 from modules.zip_decompress import decompress_archive
 
+# 1MB，文件读写块大小
+CHUNK_SIZE = 1048576
+
 
 def get_files_to_archive(target_folder: str, current_date: str, logger: logging.Logger) -> List[str]:
     """获取需要打包归档的文件列表
@@ -61,16 +64,30 @@ def detect_package_type() -> Tuple[bool, str]:
     Returns:
         (是否为打包后程序, 打包方式名称)
     """
+    # 使用 sys.argv[0] 统一判断源码模式：.py 脚本即为源码运行
+    # 在 PyInstaller/Nuitka 打包后，sys.argv[0] 指向 .exe，不会以 .py 结尾
+    is_py_script = Path(sys.argv[0]).suffix.lower() == '.py'
+    # 兜底：检查打包标识
     is_pyinstaller = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
     is_nuitka = hasattr(sys, '__compiled__')
-    is_py_script = sys.argv[0].endswith('.py')
-    is_bundled = not is_py_script or is_pyinstaller or is_nuitka
 
-    package_type = "Nuitka"
+    is_bundled = (not is_py_script) or is_pyinstaller or is_nuitka
+
+    logger = logging.getLogger(__name__)
+
     if is_pyinstaller:
-        package_type = "PyInstaller"
+        local_package_type = "PyInstaller"
+    elif is_nuitka:
+        local_package_type = "Nuitka"
+    else:
+        local_package_type = "Nuitka"
 
-    return is_bundled, package_type
+    if is_bundled:
+        logger.debug(f"运行环境: {local_package_type}")
+    else:
+        logger.debug(f"运行环境: 源码模式")
+
+    return is_bundled, local_package_type
 
 
 def parse_command_line_args() -> argparse.Namespace:
@@ -84,8 +101,8 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("-t", "--target", help="目标文件夹路径")
     parser.add_argument("-a", "--archive", help="归档文件夹路径")
     parser.add_argument("-m", "--mode", help="归档模式", choices=["scroll", "incremental"])
-    parser.add_argument("-c", "--compression", help="压缩算法", choices=["lzma", "bzip2"])
-    parser.add_argument("-l", "--level", help="压缩等级", type=int, choices=range(1, 10), metavar="1-9")
+    parser.add_argument("-c", "--compression", help="压缩算法", choices=["zstd", "lzma", "bzip2"])
+    parser.add_argument("-l", "--level", help="压缩等级", type=int, choices=range(0, 23), metavar="0-22")
     parser.add_argument("-w", "--workers", help="多线程设置", type=int)
     parser.add_argument("-L", "--save-logs", help="日志文件输出控制", choices=["true", "false"])
     parser.add_argument("-d", "--decompress", help="解压归档文件（指定ZIP文件路径）")
@@ -152,18 +169,18 @@ def main():
     config_mgr.set_logger(logger)
 
     # 检测运行环境
-    _, package_type = detect_package_type()
-    logger.debug(f"运行模式: {package_type}")
+    detect_package_type()
+    logger.debug(f"版本号: {VERSION}")
 
     try:
         target_folder = args.target if args.target else config_mgr.target_folder
         archive_folder = args.archive if args.archive else config_mgr.archive_folder
         archive_name_format = args.name if args.name else config_mgr.archive_name_format
         compression_algorithm = args.compression if args.compression else config_mgr.compression_algorithm
-        compression_level = args.level if args.level else config_mgr.compression_level
+        compression_level = args.level if args.level is not None else config_mgr.compression_level
         archive_mode = args.mode if args.mode else config_mgr.archive_mode
-        max_workers = args.workers if args.workers else config_mgr.max_workers
-        chunk_size = config_mgr.chunk_size
+        max_workers = args.workers if args.workers is not None else config_mgr.max_workers
+        chunk_size = CHUNK_SIZE
         current_date = datetime.now().strftime("%Y-%m-%d")
 
         # 将 CLI 覆盖值写入 ConfigManager，供 validate() 统一校验
@@ -180,9 +197,14 @@ def main():
         if not save_logs:
             logger.warning("日志仅控制台输出")
 
-        logger.info(f"版本号: {VERSION}")
         logger.info(f"目标文件夹: {target_folder}")
         logger.info(f"归档文件夹: {archive_folder}")
+
+        # 目标文件夹检查（避免下游函数各自重复打印）
+        if not os.path.exists(target_folder):
+            logger.warning(f"目标文件夹不存在: {target_folder}")
+            logger.info("没有文件需要归档")
+            return
 
         mode_display = "增量" if archive_mode == "incremental" else "滚动"
         logger.info(f"归档模式: {mode_display}")

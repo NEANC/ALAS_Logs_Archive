@@ -41,8 +41,10 @@ max_workers = 1
         assert mgr.validate() is True
 
     @pytest.mark.parametrize("algo,valid", [
+        ("zstd", True),
         ("bzip2", True),
         ("lzma", True),
+        ("ZSTD", True),
         ("BZIP2", True),
         ("LZMA", True),
         ("gzip", False),
@@ -62,18 +64,32 @@ max_workers = 1
         mgr.load()
         assert mgr.validate() is valid
 
-    @pytest.mark.parametrize("level,valid", [
-        (1, True),
-        (5, True),
-        (9, True),
-        (0, False),
-        (10, False),
-        (-1, False),
+    @pytest.mark.parametrize("algo,level,valid", [
+        # bzip2: 1-9
+        ("bzip2", 1, True),
+        ("bzip2", 5, True),
+        ("bzip2", 9, True),
+        ("bzip2", 0, False),
+        ("bzip2", 10, False),
+        ("bzip2", -1, False),
+        # zstd: 1-22
+        ("zstd", 1, True),
+        ("zstd", 15, True),
+        ("zstd", 22, True),
+        ("zstd", 0, False),
+        ("zstd", 23, False),
+        # lzma: 0-19
+        ("lzma", 0, True),
+        ("lzma", 9, True),
+        ("lzma", 10, True),
+        ("lzma", 19, True),
+        ("lzma", 20, False),
+        ("lzma", -1, False),
     ])
-    def test_validate_compression_level(self, level, valid, tmp_path):
-        """校验压缩等级"""
+    def test_validate_compression_level(self, algo, level, valid, tmp_path):
+        """校验压缩等级（按算法不同范围）"""
         config_path = tmp_path / "test.ini"
-        config_path.write_text(_CONFIG_HEAD + f"""compression_algorithm = bzip2
+        config_path.write_text(_CONFIG_HEAD + f"""compression_algorithm = {algo}
 compression_level = {level}
 archive_mode = scroll
 max_workers = 1

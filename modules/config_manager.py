@@ -28,7 +28,6 @@ class ConfigManager:
             'compression_level': '9',
             'archive_mode': 'incremental',
             'max_workers': '1',
-            'chunk_size': '8192',
         },
         'log': {
             'save_logs': 'true',
@@ -42,17 +41,19 @@ class ConfigManager:
         'settings.target_folder': '目标文件夹路径：需要归档的日志文件所在目录',
         'settings.archive_folder': '归档文件夹路径：生成的归档文件保存目录',
         'zip.archive_name_format': '归档文件名\n'
-                                   '# - 增量模式：直接使用该值作为文件名（自动添加 .zip 扩展名）\n'
-                                   '# - 滚动模式：如果包含 {date} 占位符会被替换为实际日期，否则在文件名前添加日期前缀',
+                                   '- 增量模式：直接使用该值作为文件名（自动添加 .zip 扩展名）\n'
+                                   '- 滚动模式：如果包含 {date} 占位符会被替换为实际日期，否则在文件名前添加日期前缀',
         'zip.compression_algorithm': '压缩算法：支持的压缩算法\n'
-                                     '# bzip2：压缩速度较快，压缩率适中\n'
-                                     '# lzma：压缩率较高，压缩速度较慢',
-        'zip.compression_level': '压缩等级：压缩算法的压缩等级（1-9）',
+                                     '- zstd：压缩速度最快，压缩率适中\n'
+                                     '- bzip2：压缩速度较快，压缩率适中\n'
+                                     '- lzma：压缩率较高，压缩速度较慢',
+        'zip.compression_level': '压缩等级：压缩算法的压缩等级控制\n'
+                                 '- ZSTD 为 1~22，BZIP2 为 1~9，LZMA 为 0~9\n'
+                                 '- LZMA 额外支持 PRESET_EXTREME 参数，填写为 10~19',
         'zip.archive_mode': '归档模式：控制归档文件的创建方式\n'
-                            '# scroll：滚动模式，当日多次运行时创建新归档文件\n'
-                            '# incremental：增量模式，将文件追加到同一 ZIP 文件中',
+                            '- scroll：滚动模式，当日多次运行时创建新归档文件\n'
+                            '- incremental：增量模式，将文件追加到同一 ZIP 文件中',
         'zip.max_workers': '最大工作线程数：压缩文件时使用的线程数',
-        'zip.chunk_size': '读取块大小：文件读写时的块大小（字节）',
         'log.save_logs': '是否保存日志文件：控制是否将程序日志保存到本地文件',
         'log.log_folder': '日志保存文件夹',
         'log.max_log_files': '最大日志文件数：保留的程序日志文件的最大数量',
@@ -96,7 +97,6 @@ class ConfigManager:
         self.compression_level = 9
         self.archive_mode = 'scroll'
         self.max_workers = 1
-        self.chunk_size = 8192
         self.save_logs = True
         self.log_folder = 'logs'
         self.max_log_files = 15
@@ -334,7 +334,6 @@ class ConfigManager:
         self.compression_level = self._get_int('zip', 'compression_level', 9)
         self.archive_mode = self._get_str('zip', 'archive_mode', 'scroll').lower()
         self.max_workers = self._get_int('zip', 'max_workers', 1)
-        self.chunk_size = self._get_int('zip', 'chunk_size', 8192)
 
         # [log]
         self.save_logs = self._get_bool('log', 'save_logs', True)
@@ -416,12 +415,14 @@ class ConfigManager:
             self._log('error', "配置错误: archive_folder 未配置")
             return False
 
-        if self.compression_algorithm not in ('bzip2', 'lzma'):
+        if self.compression_algorithm not in ('zstd', 'bzip2', 'lzma'):
             self._log('error', f"配置错误: 不支持的压缩算法 {self.compression_algorithm}")
             return False
 
-        if not 1 <= self.compression_level <= 9:
-            self._log('error', f"配置错误: 无效的压缩等级 {self.compression_level}")
+        level_ranges = {'zstd': (1, 22), 'bzip2': (1, 9), 'lzma': (0, 19)}
+        lo, hi = level_ranges.get(self.compression_algorithm, (1, 9))
+        if not lo <= self.compression_level <= hi:
+            self._log('error', f"配置错误: {self.compression_algorithm} 压缩等级需在 {lo}-{hi} 之间，当前为 {self.compression_level}")
             return False
 
         if self.archive_mode not in ('scroll', 'incremental'):

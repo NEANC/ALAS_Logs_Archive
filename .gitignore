@@ -185,6 +185,7 @@ cython_debug/
 *.zip
 *.exe
 *.log
+*.txt
 # AI 生成文档
 gpt*.md
 ds*.md
