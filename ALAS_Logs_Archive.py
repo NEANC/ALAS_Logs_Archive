@@ -172,6 +172,9 @@ def main():
         max_workers = args.workers if args.workers is not None else 1
     else:
         config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
+        # 打包后的 exe 中 sys.argv[0] 可能指向临时目录，回落检查 CWD
+        if not os.path.exists(config_path) and os.path.exists(os.path.join(os.getcwd(), CONFIG_FILE)):
+            config_path = os.path.join(os.getcwd(), CONFIG_FILE)
         config_mgr = ConfigManager(config_path)
         config_mgr.load()
         log_folder = config_mgr.log_folder
