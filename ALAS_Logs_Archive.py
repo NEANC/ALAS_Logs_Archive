@@ -151,28 +151,46 @@ def main():
         _handle_decompress(archive, output, save_logs=save_logs_arg)
         return
 
-    config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
-    config_mgr = ConfigManager(config_path)
-    config_mgr.load()
-    log_folder = config_mgr.log_folder
-    max_log_files = config_mgr.max_log_files
-    log_level = config_mgr.log_level
-    save_logs = config_mgr.save_logs
+    # CLI 模式：-t 和 -a 均提供时，直接使用 CLI 参数，不依赖配置文件
+    cli_only = bool(args.target and args.archive)
+    if cli_only:
+        save_logs = args.save_logs.lower() == "true" if args.save_logs else False
+        log_folder = "logs"
+        max_log_files = 15
+        log_level = logging.INFO
 
-    # 命令行参数覆盖配置文件
-    if args.save_logs:
-        save_logs = args.save_logs.lower() == "true"
+        logger = setup_logger(log_folder, max_log_files, log_level, save_logs)
+        detect_package_type()
+        logger.debug(f"版本号: {VERSION}")
 
-    logger = setup_logger(log_folder, max_log_files, log_level, save_logs)
+        target_folder = args.target
+        archive_folder = args.archive
+        archive_name_format = args.name if args.name else "存档"
+        compression_algorithm = args.compression if args.compression else "zstd"
+        compression_level = args.level if args.level is not None else 9
+        archive_mode = args.mode if args.mode else "scroll"
+        max_workers = args.workers if args.workers is not None else 1
+    else:
+        config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
+        config_mgr = ConfigManager(config_path)
+        config_mgr.load()
+        log_folder = config_mgr.log_folder
+        max_log_files = config_mgr.max_log_files
+        log_level = config_mgr.log_level
+        save_logs = config_mgr.save_logs
 
-    # 日志系统就绪，注入 ConfigManager
-    config_mgr.set_logger(logger)
+        # 命令行参数覆盖配置文件
+        if args.save_logs:
+            save_logs = args.save_logs.lower() == "true"
 
-    # 检测运行环境
-    detect_package_type()
-    logger.debug(f"版本号: {VERSION}")
+        logger = setup_logger(log_folder, max_log_files, log_level, save_logs)
+        # 日志系统就绪，注入 ConfigManager
+        config_mgr.set_logger(logger)
 
-    try:
+        # 检测运行环境
+        detect_package_type()
+        logger.debug(f"版本号: {VERSION}")
+
         target_folder = args.target if args.target else config_mgr.target_folder
         archive_folder = args.archive if args.archive else config_mgr.archive_folder
         archive_name_format = args.name if args.name else config_mgr.archive_name_format
@@ -180,8 +198,6 @@ def main():
         compression_level = args.level if args.level is not None else config_mgr.compression_level
         archive_mode = args.mode if args.mode else config_mgr.archive_mode
         max_workers = args.workers if args.workers is not None else config_mgr.max_workers
-        chunk_size = CHUNK_SIZE
-        current_date = datetime.now().strftime("%Y-%m-%d")
 
         # 将 CLI 覆盖值写入 ConfigManager，供 validate() 统一校验
         config_mgr.target_folder = target_folder
@@ -194,6 +210,10 @@ def main():
         if not config_mgr.validate():
             sys.exit(1)
 
+    chunk_size = CHUNK_SIZE
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
+    try:
         if not save_logs:
             logger.warning("日志仅控制台输出")
 

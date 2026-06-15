@@ -102,7 +102,7 @@ def compress_file(file_path: str, compression_algorithm: str, compression_level:
             kwargs['preset'] = preset | lzma.PRESET_EXTREME
         compressed_data = lzma.compress(data, **kwargs)
     elif algo == "bzip2":
-        compressed_data = bz2.compress(data, compresslevel=level)
+        compressed_data = bz2.compress(data, level)
     elif algo == "zstd":
         compressed_data = zstd.ZstdCompressor(level=level, write_checksum=True).compress(data)
     else:
@@ -150,7 +150,7 @@ def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
                             break
                         writer.write(chunk)
             elif algo == "bzip2":
-                cctx = bz2.BZ2Compressor(compresslevel=level)
+                cctx = bz2.BZ2Compressor(level)
                 while True:
                     chunk = src.read(chunk_size)
                     if not chunk:

@@ -1,43 +1,45 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -*-
-"""CI 端到端测试辅助脚本
+"""CI E2E test helper script.
 
-生成测试数据 + 调用 ALAS_Logs_Archive 执行归档/解压/验证。
-CI workflow 调用此脚本，不与单元测试混淆。
-
-用法:
-    python tests/ci_e2e_helper.py --mode source --target TMPDIR --archive ARCDIR [--exe PATH]
+Generates test log files, invokes ALAS_Logs_Archive for
+archive / decompress / verify flows. Used by e2e-test.yml.
 """
 
 import argparse
 import hashlib
 import os
 import random
+import shutil
 import string
 import subprocess
 import sys
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-
-# 配置常量
+# Config
 FILES_PER_DATE = 10
 DATES = [
-    (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d"),  # 前天
-    (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"),  # 昨天
-    datetime.now().strftime("%Y-%m-%d"),                         # 今天
-    (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),   # 明天
+    (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d"),  # day-before-yesterday
+    (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"),  # yesterday
+    datetime.now().strftime("%Y-%m-%d"),                         # today
+    (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),   # tomorrow
 ]
 LARGE_FILE_SIZE = 500 * 1024 * 1024  # 500MB
-SMALL_FILE_MIN = 1024                 # 1KB
-SMALL_FILE_MAX = 512 * 1024           # 512KB
-ALGORITHMS = ["zstd", "lzma", "bzip2"]
-ARCHIVE_NAME = "ci_test_存档"
+SMALL_FILE_MIN = 1024                  # 1KB
+SMALL_FILE_MAX = 512 * 1024            # 512KB
+ARCHIVE_NAME = "ci_test_archive"
+
+
+def _now() -> str:
+    return datetime.now().strftime("%H:%M:%S")
+
+
+def log(msg: str) -> None:
+    print(f"[{_now()}] [CI] {msg}", flush=True)
 
 
 def random_content(size: int) -> bytes:
-    """生成可均匀压缩的伪随机内容（非全零但不至于压缩到 0B）"""
     chunk = bytearray(random.getrandbits(8) for _ in range(min(size, 8192)))
     return (chunk * ((size // len(chunk)) + 1))[:size]
 
@@ -54,114 +56,160 @@ def sha256_file(path: str) -> str:
 
 
 def generate_test_data(target_dir: str) -> dict:
-    """在 target_dir 下生成测试日志文件
+    """Generate test log files under target_dir.
 
-    每个日期生成 FILES_PER_DATE 个 log 文件 + 若干 txt/_gui 文件，
-    其中每个日期阵列中至少有一个 500MB 的大文件。
+    Each date gets FILES_PER_DATE .log files (one 500MB) + _gui.txt + notes.txt.
+    Also creates an 'error' folder with a crash.log.
 
-    Returns:
-        {文件名: {"sha256": ..., "size": ...}, ...}  原文清单
+    Returns: {filename: {"sha256": ..., "size": ...}, ...}
     """
     os.makedirs(target_dir, exist_ok=True)
     manifest = {}
 
     for date_str in DATES:
-        date_prefix = f"{date_str}_"
-        # 生成 idx=0 为 500MB 大文件，其余为小文件
+        prefix = f"{date_str}_"
         for idx in range(FILES_PER_DATE):
             size = LARGE_FILE_SIZE if idx == 0 else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
-            filename = f"{date_prefix}挂机-测试{idx:02d}.log"
+            filename = f"{prefix}test_{idx:02d}.log"
             path = os.path.join(target_dir, filename)
             with open(path, "wb") as f:
                 f.write(random_content(size))
             manifest[filename] = {"sha256": sha256_file(path), "size": size}
 
-        # 混入 _gui.txt 文件（各 1 个）
-        gui_name = f"{date_prefix}挂机-测试_gui.txt"
+        gui_name = f"{prefix}test_gui.txt"
         path = os.path.join(target_dir, gui_name)
         with open(path, "w", encoding="utf-8") as f:
             f.write("".join(random.choice(string.ascii_letters) for _ in range(1024)))
         manifest[gui_name] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
-        # 混入普通 txt 文件
-        txt_name = f"{date_prefix}notes.txt"
+        txt_name = f"{prefix}notes.txt"
         path = os.path.join(target_dir, txt_name)
         with open(path, "w", encoding="utf-8") as f:
             f.write("test notes\n" * 100)
         manifest[txt_name] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
-    # 额外在根目录放一个独立的 error 文件夹（模拟待清理的 error）
     error_dir = os.path.join(target_dir, "error")
     os.makedirs(error_dir, exist_ok=True)
     err_file = os.path.join(error_dir, "crash.log")
     with open(err_file, "wb") as f:
         f.write(b"ERROR CONTENT\n" * 100)
 
-    print(f"[CI] 测试数据已生成: {target_dir}  ({len(manifest)} 个文件)")
+    log(f"Test data generated: {target_dir}  ({len(manifest)} files)")
     return manifest
 
 
-def run_cmd(args: list, cwd: str = None, timeout: int = 1200) -> subprocess.CompletedProcess:
-    """运行命令并返回结果。超时默认 20 分钟。"""
-    print(f"[CI] 运行: {' '.join(args)}")
-    return subprocess.run(args, cwd=cwd or ".", capture_output=False, timeout=timeout)
+def run_archive(args: list, cwd: str = None, timeout: int = 1800) -> subprocess.CompletedProcess:
+    """Run archive subprocess and print its output."""
+    log(f"Run: {' '.join(args)}")
+    result = subprocess.run(
+        args,
+        cwd=cwd or os.getcwd(),
+        capture_output=True,
+        timeout=timeout,
+    )
+    # Write stdout/stderr to console bypassing Python's encoding layer
+    # (sys.stdout uses cp1252 on Windows CI runners, which chokes on UTF-8)
+    try:
+        sys.stdout.buffer.write(result.stdout)
+        sys.stdout.buffer.write(result.stderr)
+    except OSError:
+        # Fallback for edge cases
+        sys.stdout.write(result.stdout.decode("utf-8", errors="replace"))
+        sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))
+    sys.stdout.buffer.flush()
+    if result.returncode != 0:
+        log(f"FAILED with exit code {result.returncode}")
+    return result
 
 
 def verify_decompression(output_dir: str, expected_manifest: dict) -> bool:
-    """验证解压输出与原始清单一致（只检查归档内的文件）"""
+    """Verify decompressed files match original manifest."""
     ok = True
     for fname, info in expected_manifest.items():
         out_path = os.path.join(output_dir, fname)
         if not os.path.isfile(out_path):
-            print(f"[CI] 缺失: {fname}", file=sys.stderr)
+            log(f"MISSING: {fname}")
             ok = False
             continue
         actual_sha = sha256_file(out_path)
         if actual_sha != info["sha256"]:
-            print(f"[CI] HASH 不匹配: {fname}  expected={info['sha256'][:16]} actual={actual_sha[:16]}", file=sys.stderr)
+            log(f"HASH MISMATCH: {fname}  expected={info['sha256'][:16]} actual={actual_sha[:16]}")
             ok = False
-        else:
-            print(f"[CI] 验证通过: {fname} ({info['size']} B)")
+    if ok:
+        log(f"Verification passed: {len(expected_manifest)} files OK")
     return ok
+
+
+def _generate_small_test_set(target_dir: str) -> dict:
+    """Generate a small batch of test files (no 500MB) for config-file test."""
+    manifest = {}
+    yesterday = DATES[1]
+    prefix = f"{yesterday}_"
+    for idx in range(4):
+        size = random.randint(1024, 128 * 1024)
+        fn = f"{prefix}test_{idx:02d}.log"
+        path = os.path.join(target_dir, fn)
+        with open(path, "wb") as f:
+            f.write(random_content(size))
+        manifest[fn] = {"sha256": sha256_file(path), "size": size}
+    log(f"Small test data generated: {target_dir} ({len(manifest)} files)")
+    return manifest
+
+
+def _write_config_ini(path: str, target_dir: str, archive_dir: str) -> None:
+    """Write a minimal valid config.ini."""
+    content = f"""[settings]
+target_folder = {target_dir}
+archive_folder = {archive_dir}
+
+[zip]
+archive_name_format = 存档.zip
+compression_algorithm = zstd
+compression_level = 9
+archive_mode = scroll
+max_workers = 1
+
+[log]
+save_logs = false
+log_folder = logs
+max_log_files = 15
+log_level = INFO
+"""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", required=True, choices=["source", "exe"])
-    parser.add_argument("--exe", default="", help="exe 路径 (mode=exe 时必需)")
-    parser.add_argument("--target", required=True, help="源日志目录")
-    parser.add_argument("--archive", required=True, help="归档输出目录")
-    parser.add_argument("--decompress", default="", help="解压输出目录")
+    parser.add_argument("--exe", default="", help="exe path (required when mode=exe)")
+    parser.add_argument("--target", required=True, help="source log directory")
+    parser.add_argument("--archive", required=True, help="archive output directory")
     args = parser.parse_args()
 
     target_dir = args.target
     archive_dir = args.archive
-    decompress_dir = args.decompress or os.path.join(archive_dir, "ci_decompressed")
+    decompress_dir = os.path.join(archive_dir, "ci_decompressed")
 
-    # 构建命令前缀
     if args.mode == "exe":
         if not args.exe or not os.path.isfile(args.exe):
-            print(f"[CI] FATAL: exe 不存在: {args.exe}", file=sys.stderr)
+            log(f"FATAL: exe not found: {args.exe}")
             sys.exit(1)
         cmd_base = [args.exe]
     else:
         cmd_base = [sys.executable, "ALAS_Logs_Archive.py"]
 
-    # 清理旧目录
+    # Clean up old directories
     for d in [target_dir, archive_dir, decompress_dir]:
-        try:
-            import shutil
-            shutil.rmtree(d, ignore_errors=True)
-        except Exception:
-            pass
+        shutil.rmtree(d, ignore_errors=True)
 
+    # Phase 1: Scroll mode (zstd)
+    log("=" * 50)
+    log("Phase 1: Scroll mode (zstd)")
+    log("=" * 50)
 
-    # 1. 滚动模式 压缩 (默认 zstd)
-    print("\n" + "=" * 60)
-    print("[CI] 阶段 1: 滚动模式 (zstd)")
-    print("=" * 60)
     manifest = generate_test_data(target_dir)
-    run_cmd(cmd_base + [
+    result = run_archive(cmd_base + [
         "-t", target_dir,
         "-a", archive_dir,
         "-n", ARCHIVE_NAME,
@@ -171,162 +219,182 @@ def main():
         "-w", "4",
         "-L", "false",
     ])
+    if result.returncode != 0:
+        log("Phase 1 FAILED: archive tool exited non-zero")
+        sys.exit(1)
 
-    # 验证：滚动模式下 ZIP 应已创建，原文件应已删除
     scroll_zips = sorted(Path(archive_dir).glob(f"*{ARCHIVE_NAME}*.zip"))
     if not scroll_zips:
-        print("[CI] FAIL: 滚动模式未生成归档", file=sys.stderr)
+        log("FAIL: no archive created by scroll mode")
         sys.exit(1)
-    print(f"[CI] 滚动归档: {[z.name for z in scroll_zips]}")
+    log(f"Scroll archives: {[z.name for z in scroll_zips]}")
 
-    # 验证原文件被清除（除当日和明日文件外）
+    # Verify old source files were deleted (except today and tomorrow)
     remaining = list(Path(target_dir).glob("*.log")) + list(Path(target_dir).glob("*.txt"))
     today = datetime.now().strftime("%Y-%m-%d")
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     unexpected = [f.name for f in remaining if today not in f.name and tomorrow not in f.name]
     if unexpected:
-        print(f"[CI] FAIL: 滚动模式未删除旧文件: {unexpected}", file=sys.stderr)
+        log(f"FAIL: scroll mode did not delete old files: {unexpected}")
         sys.exit(1)
-    print("[CI] 滚动模式 归档验证通过 ✓")
+    log("Scroll mode archive verification passed")
 
-    # 解压滚动归档并验证
-    os.makedirs(decompress_dir + "_scroll", exist_ok=True)
+    # Decompress scroll archives
+    scroll_out = decompress_dir + "_scroll"
+    os.makedirs(scroll_out, exist_ok=True)
     for z in scroll_zips:
-        run_cmd(cmd_base + [
-            "-d", str(z),
-            "-o", decompress_dir + "_scroll",
-            "-L", "false",
-        ])
-    # 过滤出非今日/明日的文件验证（那些是今天和明天的未归档文件）
+        run_archive(cmd_base + ["-d", str(z), "-o", scroll_out, "-L", "false"])
+
     expected_non_today = {k: v for k, v in manifest.items()
                           if not k.startswith(today) and not k.startswith(tomorrow)}
-    if not verify_decompression(decompress_dir + "_scroll", expected_non_today):
+    if not verify_decompression(scroll_out, expected_non_today):
         sys.exit(1)
-    print("[CI] 滚动模式 解压验证通过 ✓")
+    log("Phase 1: Scroll decompress verification passed")
 
 
-    # 2. 增量模式 (混用算法)
-    # 重新生成测试数据（只生成昨天的，模拟分批追加）
-    print("\n" + "=" * 60)
-    print("[CI] 阶段 2: 增量模式 (混用算法)")
-    print("=" * 60)
-    # 清理并重新生成
-    import shutil
+    # Phase 2: Incremental mode (mixed algorithms)
+    log("=" * 50)
+    log("Phase 2: Incremental mode (mixed algorithms)")
+    log("=" * 50)
+
     shutil.rmtree(target_dir, ignore_errors=True)
-    # 分批生成：一半用 zstd 压缩，追加后用 lzma，最后用 bzip2
+    os.makedirs(target_dir, exist_ok=True)
     batch_size = FILES_PER_DATE // 2
     all_manifest = {}
 
-    # 第 1 批：只生成前 batch_size 个文件
-    yesterday = DATES[1]  # 昨天
-    date_prefix = f"{yesterday}_"
+    yesterday = DATES[1]
+    prefix = f"{yesterday}_"
+
+    # Batch 1: zstd
     for idx in range(batch_size):
         size = LARGE_FILE_SIZE if idx == 0 else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
-        fn = f"{date_prefix}挂机-测试{idx:02d}.log"
+        fn = f"{prefix}test_{idx:02d}.log"
         path = os.path.join(target_dir, fn)
         with open(path, "wb") as f:
             f.write(random_content(size))
         all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
-    # 加上 gui / txt
-    for suffix, ext in [("_gui", "txt"), ("notes", "txt")]:
-        fn = f"{date_prefix}{'挂机-测试' + suffix if '_gui' in suffix else ''}{'.' + ext if ext else ''}"
-        if suffix == "_gui":
-            fn = f"{date_prefix}挂机-测试_gui.txt"
-        elif suffix == "notes":
-            fn = f"{date_prefix}notes.txt"
-        path = os.path.join(target_dir, fn)
-        with open(path, "w" if ext == "txt" else "wb") as f:
-            f.write("A" * 2048 if ext == "txt" else b"B" * 2048)
-        all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
-    # 运行增量模式-zstd
-    inc_archive = os.path.join(archive_dir, "inc_存档.zip")
-    run_cmd(cmd_base + [
-        "-t", target_dir,
-        "-a", archive_dir,
-        "-n", "inc_存档",
-        "-m", "incremental",
+    fn = f"{prefix}test_gui.txt"
+    path = os.path.join(target_dir, fn)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("A" * 2048)
+    all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+
+    fn = f"{prefix}notes.txt"
+    path = os.path.join(target_dir, fn)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("B" * 2048)
+    all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+
+    inc_archive = os.path.join(archive_dir, "inc_archive.zip")
+    run_archive(cmd_base + [
+        "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
+        "-m", "incremental", "-c", "zstd", "-l", "3", "-w", "4", "-L", "false",
+    ])
+    log("Incremental batch 1 (zstd) done")
+
+    # Batch 2: lzma
+    for idx in range(batch_size, FILES_PER_DATE):
+        size = random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
+        fn = f"{prefix}test_{idx:02d}.log"
+        path = os.path.join(target_dir, fn)
+        with open(path, "wb") as f:
+            f.write(random_content(size))
+        all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
+
+    run_archive(cmd_base + [
+        "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
+        "-m", "incremental", "-c", "lzma", "-l", "3", "-w", "4", "-L", "false",
+    ])
+    log("Incremental batch 2 (lzma) done")
+
+
+    # Batch 3: bzip2 (tomorrow date)
+    tomorrow_str = DATES[3]
+    tp = f"{tomorrow_str}_"
+    for idx in range(FILES_PER_DATE):
+        size = LARGE_FILE_SIZE if idx == 0 else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
+        fn = f"{tp}test_{idx:02d}.log"
+        path = os.path.join(target_dir, fn)
+        with open(path, "wb") as f:
+            f.write(random_content(size))
+        all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
+
+    run_archive(cmd_base + [
+        "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
+        "-m", "incremental", "-c", "bzip2", "-l", "3", "-w", "4", "-L", "false",
+    ])
+    log("Incremental batch 3 (bzip2) done")
+
+    inc_out = decompress_dir + "_inc"
+    os.makedirs(inc_out, exist_ok=True)
+    run_archive(cmd_base + ["-d", inc_archive, "-o", inc_out, "-L", "false"])
+    if not verify_decompression(inc_out, all_manifest):
+        sys.exit(1)
+    log("Phase 2: Incremental (mixed algorithms) verification passed")
+
+    # Phase 3: Standalone decompress test
+    log("=" * 50)
+    log("Phase 3: Standalone decompress test")
+    log("=" * 50)
+
+    shutil.rmtree(decompress_dir, ignore_errors=True)
+    os.makedirs(decompress_dir, exist_ok=True)
+    for z in scroll_zips:
+        run_archive(cmd_base + ["-d", str(z), "-o", decompress_dir, "-L", "false"])
+    if not verify_decompression(decompress_dir, expected_non_today):
+        sys.exit(1)
+    log("Phase 3: Standalone decompress passed")
+
+    # Phase 4: Config-file-driven mode (no -t/-a on CLI)
+    log("=" * 50)
+    log("Phase 4: Config-file-driven mode (no -t/-a)")
+    log("=" * 50)
+
+    cfg_target = os.path.join(archive_dir, "cfg_target")
+    cfg_arcdir = os.path.join(archive_dir, "cfg_archive")
+    for d in [cfg_target, cfg_arcdir]:
+        shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(cfg_target, exist_ok=True)
+    os.makedirs(cfg_arcdir, exist_ok=True)
+
+    # Write a config.ini that points to the test directories
+    config_ini = "config.ini"
+    _write_config_ini(config_ini, cfg_target, cfg_arcdir)
+    log(f"Written {config_ini} -> target={cfg_target} archive={cfg_arcdir}")
+
+    cfg_manifest = _generate_small_test_set(cfg_target)
+    # Run without -t and -a — must pick up target/archive from config.ini
+    run_archive(cmd_base + [
+        "-m", "scroll",
         "-c", "zstd",
         "-l", "3",
         "-w", "4",
         "-L", "false",
     ])
-    print("[CI] 增量批1 (zstd) 完成")
+    try:
+        os.unlink(config_ini)
+    except OSError:
+        pass
+    log(f"Removed {config_ini}")
 
-    # 第 2 批：生成剩余文件
-    for idx in range(batch_size, FILES_PER_DATE):
-        size = random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
-        fn = f"{date_prefix}挂机-测试{idx:02d}.log"
-        path = os.path.join(target_dir, fn)
-        with open(path, "wb") as f:
-            f.write(random_content(size))
-        all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
-
-    run_cmd(cmd_base + [
-        "-t", target_dir,
-        "-a", archive_dir,
-        "-n", "inc_存档",
-        "-m", "incremental",
-        "-c", "lzma",
-        "-l", "3",
-        "-w", "4",
-        "-L", "false",
-    ])
-    print("[CI] 增量批2 (lzma) 完成")
-
-    # 第 3 批：再生成一批（次日日期）
-    tomorrow_str = DATES[3]
-    tp = f"{tomorrow_str}_"
-    for idx in range(FILES_PER_DATE):
-        size = LARGE_FILE_SIZE if idx == 0 else random.randint(SMALL_FILE_MIN, SMALL_FILE_MAX)
-        fn = f"{tp}挂机-测试{idx:02d}.log"
-        path = os.path.join(target_dir, fn)
-        with open(path, "wb") as f:
-            f.write(random_content(size))
-        all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
-
-    run_cmd(cmd_base + [
-        "-t", target_dir,
-        "-a", archive_dir,
-        "-n", "inc_存档",
-        "-m", "incremental",
-        "-c", "bzip2",
-        "-l", "3",
-        "-w", "4",
-        "-L", "false",
-    ])
-    print("[CI] 增量批3 (bzip2) 完成")
-
-    # 解压增量归档并验证
-    os.makedirs(decompress_dir + "_inc", exist_ok=True)
-    run_cmd(cmd_base + [
-        "-d", inc_archive,
-        "-o", decompress_dir + "_inc",
-        "-L", "false",
-    ])
-    if not verify_decompression(decompress_dir + "_inc", all_manifest):
+    cfg_zips = sorted(Path(cfg_arcdir).glob("*.zip"))
+    if not cfg_zips:
+        log("FAIL: config-file-driven scroll mode did not create archive")
         sys.exit(1)
-    print("[CI] 增量模式 (混用算法) 解压验证通过 ✓")
+    log(f"Config-mode archives: {[z.name for z in cfg_zips]}")
 
-
-    # 3. 解压独立测试（用滚动模式的 ZIP 再测一次）
-    print("\n" + "=" * 60)
-    print("[CI] 阶段 3: 独立解压测试")
-    print("=" * 60)
-    shutil.rmtree(decompress_dir, ignore_errors=True)
-    for z in scroll_zips:
-        run_cmd(cmd_base + [
-            "-d", str(z),
-            "-o", decompress_dir,
-            "-L", "false",
-        ])
-    if not verify_decompression(decompress_dir, expected_non_today):
+    cfg_out = decompress_dir + "_cfg"
+    os.makedirs(cfg_out, exist_ok=True)
+    for z in cfg_zips:
+        run_archive(cmd_base + ["-d", str(z), "-o", cfg_out, "-L", "false"])
+    if not verify_decompression(cfg_out, cfg_manifest):
         sys.exit(1)
-    print("[CI] 独立解压测试通过 ✓")
+    log("Phase 4: Config-file-driven mode passed")
 
-    print("\n" + "=" * 60)
-    print("[CI] 全部 E2E 测试通过 ✓")
-    print("=" * 60)
+    log("=" * 50)
+    log("ALL E2E TESTS PASSED")
+    log("=" * 50)
 
 
 if __name__ == "__main__":
