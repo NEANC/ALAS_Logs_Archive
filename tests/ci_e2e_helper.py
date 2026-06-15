@@ -101,19 +101,22 @@ def generate_test_data(target_dir: str) -> dict:
 def run_archive(args: list, cwd: str = None, timeout: int = 1800) -> subprocess.CompletedProcess:
     """Run archive subprocess and print its output."""
     log(f"Run: {' '.join(args)}")
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run(
         args,
         cwd=cwd or os.getcwd(),
         capture_output=True,
         timeout=timeout,
-        env=env,
     )
-    sys.stdout.write(result.stdout.decode("utf-8", errors="replace"))
-    sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))
-    sys.stdout.flush()
-    sys.stderr.flush()
+    # Write stdout/stderr to console bypassing Python's encoding layer
+    # (sys.stdout uses cp1252 on Windows CI runners, which chokes on UTF-8)
+    try:
+        sys.stdout.buffer.write(result.stdout)
+        sys.stdout.buffer.write(result.stderr)
+    except OSError:
+        # Fallback for edge cases
+        sys.stdout.write(result.stdout.decode("utf-8", errors="replace"))
+        sys.stderr.write(result.stderr.decode("utf-8", errors="replace"))
+    sys.stdout.buffer.flush()
     if result.returncode != 0:
         log(f"FAILED with exit code {result.returncode}")
     return result
@@ -135,6 +138,45 @@ def verify_decompression(output_dir: str, expected_manifest: dict) -> bool:
     if ok:
         log(f"Verification passed: {len(expected_manifest)} files OK")
     return ok
+
+
+def _generate_small_test_set(target_dir: str) -> dict:
+    """Generate a small batch of test files (no 500MB) for config-file test."""
+    manifest = {}
+    yesterday = DATES[1]
+    prefix = f"{yesterday}_"
+    for idx in range(4):
+        size = random.randint(1024, 128 * 1024)
+        fn = f"{prefix}test_{idx:02d}.log"
+        path = os.path.join(target_dir, fn)
+        with open(path, "wb") as f:
+            f.write(random_content(size))
+        manifest[fn] = {"sha256": sha256_file(path), "size": size}
+    log(f"Small test data generated: {target_dir} ({len(manifest)} files)")
+    return manifest
+
+
+def _write_config_ini(path: str, target_dir: str, archive_dir: str) -> None:
+    """Write a minimal valid config.ini."""
+    content = f"""[settings]
+target_folder = {target_dir}
+archive_folder = {archive_dir}
+
+[zip]
+archive_name_format = 存档.zip
+compression_algorithm = zstd
+compression_level = 9
+archive_mode = scroll
+max_workers = 1
+
+[log]
+save_logs = false
+log_folder = logs
+max_log_files = 15
+log_level = INFO
+"""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
 
 
 def main():
@@ -209,12 +251,14 @@ def main():
         sys.exit(1)
     log("Phase 1: Scroll decompress verification passed")
 
+
     # Phase 2: Incremental mode (mixed algorithms)
     log("=" * 50)
     log("Phase 2: Incremental mode (mixed algorithms)")
     log("=" * 50)
 
     shutil.rmtree(target_dir, ignore_errors=True)
+    os.makedirs(target_dir, exist_ok=True)
     batch_size = FILES_PER_DATE // 2
     all_manifest = {}
 
@@ -264,6 +308,7 @@ def main():
     ])
     log("Incremental batch 2 (lzma) done")
 
+
     # Batch 3: bzip2 (tomorrow date)
     tomorrow_str = DATES[3]
     tp = f"{tomorrow_str}_"
@@ -300,6 +345,52 @@ def main():
     if not verify_decompression(decompress_dir, expected_non_today):
         sys.exit(1)
     log("Phase 3: Standalone decompress passed")
+
+    # Phase 4: Config-file-driven mode (no -t/-a on CLI)
+    log("=" * 50)
+    log("Phase 4: Config-file-driven mode (no -t/-a)")
+    log("=" * 50)
+
+    cfg_target = os.path.join(archive_dir, "cfg_target")
+    cfg_arcdir = os.path.join(archive_dir, "cfg_archive")
+    for d in [cfg_target, cfg_arcdir]:
+        shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(cfg_target, exist_ok=True)
+    os.makedirs(cfg_arcdir, exist_ok=True)
+
+    # Write a config.ini that points to the test directories
+    config_ini = "config.ini"
+    _write_config_ini(config_ini, cfg_target, cfg_arcdir)
+    log(f"Written {config_ini} -> target={cfg_target} archive={cfg_arcdir}")
+
+    cfg_manifest = _generate_small_test_set(cfg_target)
+    # Run without -t and -a — must pick up target/archive from config.ini
+    run_archive(cmd_base + [
+        "-m", "scroll",
+        "-c", "zstd",
+        "-l", "3",
+        "-w", "4",
+        "-L", "false",
+    ])
+    try:
+        os.unlink(config_ini)
+    except OSError:
+        pass
+    log(f"Removed {config_ini}")
+
+    cfg_zips = sorted(Path(cfg_arcdir).glob("*.zip"))
+    if not cfg_zips:
+        log("FAIL: config-file-driven scroll mode did not create archive")
+        sys.exit(1)
+    log(f"Config-mode archives: {[z.name for z in cfg_zips]}")
+
+    cfg_out = decompress_dir + "_cfg"
+    os.makedirs(cfg_out, exist_ok=True)
+    for z in cfg_zips:
+        run_archive(cmd_base + ["-d", str(z), "-o", cfg_out, "-L", "false"])
+    if not verify_decompression(cfg_out, cfg_manifest):
+        sys.exit(1)
+    log("Phase 4: Config-file-driven mode passed")
 
     log("=" * 50)
     log("ALL E2E TESTS PASSED")
