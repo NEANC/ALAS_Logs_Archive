@@ -69,10 +69,9 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
             # Zip Slip 路径穿越防护
             real_output_path = os.path.realpath(output_path)
             if os.path.commonpath([real_output_dir, real_output_path]) != real_output_dir:
-                logger.critical(f"解压路径异常：{info.filename}")
-                logger.debug(f"异常解压路径: {output_path}")
-                logger.debug(f"应解压到目录: {real_output_path}")
-                logger.critical("已跳过该文件，请检查归档文件是否被篡改")
+                logger.warning(f"{os.path.basename(info.filename)} 文件解压路径异常: {output_path}")
+                logger.warning(f"应解压到目录: {real_output_path}")
+                logger.warning("已跳过该文件，请检查归档文件是否被篡改")
                 continue
 
             parent_dir = os.path.dirname(output_path)
