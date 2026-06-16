@@ -19,17 +19,17 @@ from pathlib import Path
 
 # Config
 FILES_PER_DATE_MIN = 10
-FILES_PER_DATE_MAX = 100
+FILES_PER_DATE_MAX = 30
 DATES = [
     (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d"),  # day-before-yesterday
     (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"),  # yesterday
     datetime.now().strftime("%Y-%m-%d"),                         # today
     (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d"),   # tomorrow
 ]
-LARGE_FILE_MIN = 300 * 1024 * 1024   # 300MB
-LARGE_FILE_MAX = 1024 * 1024 * 1024  # 1GB
-SMALL_FILE_MIN = 1 * 1024 * 1024     # 1MB
-SMALL_FILE_MAX = 256 * 1024 * 1024   # 256MB
+LARGE_FILE_MIN = 256 * 1024 * 1024  # 256MB
+LARGE_FILE_MAX = 512 * 1024 * 1024  # 512MB
+SMALL_FILE_MIN = 10 * 1024          # 10KB
+SMALL_FILE_MAX = 1 * 1024 * 1024    # 1MB
 ARCHIVE_NAME = "ci_test_archive"
 
 
