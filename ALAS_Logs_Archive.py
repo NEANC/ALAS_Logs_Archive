@@ -128,15 +128,17 @@ def parse_command_line_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = False) -> None:
+def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = False,
+                       console_level: int = logging.INFO) -> None:
     """处理解压操作
 
     Args:
         archive_path: 归档文件路径（ZIP文件）
         output_dir: 解压输出目录
         save_logs: 是否保存日志文件
+        console_level: 控制台日志等级
     """
-    logger = setup_logger("logs", 15, logging.INFO, save_logs=save_logs)
+    logger = setup_logger("logs", 15, console_level, save_logs=save_logs)
     logger.info(f"解压归档文件： {archive_path}")
     logger.info(f"解压到目录: {output_dir}")
 
@@ -162,10 +164,11 @@ def main():
     #   2. 文件关联/拖放 ZIP   →  args.zipfile (位置参数)
     if args.decompress or args.zipfile:
         save_logs_arg = bool(args.save_logs and args.save_logs.lower() == "true")
+        console_lvl = getattr(logging, args.console_level) if args.console_level else logging.INFO
 
         archive = args.decompress if args.decompress else args.zipfile
         output = args.output if args.output else os.path.splitext(archive)[0]
-        _handle_decompress(archive, output, save_logs=save_logs_arg)
+        _handle_decompress(archive, output, save_logs=save_logs_arg, console_level=console_lvl)
         return
 
     # CLI 模式：-t 和 -a 均提供时，直接使用 CLI 参数，不依赖配置文件
