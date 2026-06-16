@@ -84,13 +84,12 @@ def generate_test_data(target_dir: str) -> dict:
                 f.write(random_content(size))
             manifest[filename] = {"sha256": sha256_file(path), "size": size}
 
-        # matching number of _gui.txt files
-        for idx in range(n_files):
-            gui_name = f"{prefix}test_{idx:03d}_gui.txt"
-            path = os.path.join(target_dir, gui_name)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("".join(random.choice(string.ascii_letters) for _ in range(1024)))
-            manifest[gui_name] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+        # single _gui.txt (ALAS native format)
+        gui_name = f"{date_str}_gui.txt"
+        path = os.path.join(target_dir, gui_name)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("".join(random.choice(string.ascii_letters) for _ in range(1024)))
+        manifest[gui_name] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
         # extra notes.txt
         txt_name = f"{prefix}notes.txt"
@@ -130,9 +129,11 @@ def run_archive(args: list, cwd: str = None, timeout: int = 1800) -> subprocess.
 
 
 def verify_decompression(output_dir: str, expected_manifest: dict) -> bool:
-    """Verify decompressed files match original manifest."""
+    """Verify decompressed files match original manifest (gui files excluded — not archived)."""
     ok = True
     for fname, info in expected_manifest.items():
+        if "_gui" in fname:
+            continue  # gui files are deleted by the tool, never archived
         out_path = os.path.join(output_dir, fname)
         if not os.path.isfile(out_path):
             log(f"MISSING: {fname}")
@@ -321,13 +322,12 @@ def main():
             f.write(random_content(size))
         all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
 
-    # gui files
-    for idx in range(total_files):
-        fn = f"{prefix}test_{idx:03d}_gui.txt"
-        path = os.path.join(target_dir, fn)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("A" * 1536)
-        all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+    # single _gui.txt (ALAS native format)
+    fn = f"{yesterday}_gui.txt"
+    path = os.path.join(target_dir, fn)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("A" * 1536)
+    all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
     fn = f"{prefix}notes.txt"
     path = os.path.join(target_dir, fn)
@@ -356,12 +356,11 @@ def main():
             f.write(random_content(size))
         all_manifest[fn] = {"sha256": sha256_file(path), "size": size}
 
-    for idx in range(n3):
-        fn = f"{tp}test_{idx:03d}_gui.txt"
-        path = os.path.join(target_dir, fn)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("C" * 1536)
-        all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+    fn = f"{tomorrow_str}_gui.txt"
+    path = os.path.join(target_dir, fn)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("C" * 1536)
+    all_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
     run_archive(cmd_base + [
         "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
@@ -455,12 +454,11 @@ def main():
         with open(path, "wb") as f:
             f.write(random_content(size))
         lzma_manifest[fn] = {"sha256": sha256_file(path), "size": size}
-    for idx in range(n_lzma):
-        fn = f"{lzma_prefix}test_{idx:03d}_gui.txt"
-        path = os.path.join(target_dir, fn)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("D" * 1536)
-        lzma_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
+    fn = f"{DATES[1]}_gui.txt"
+    path = os.path.join(target_dir, fn)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("D" * 1536)
+    lzma_manifest[fn] = {"sha256": sha256_file(path), "size": os.path.getsize(path)}
 
     lzma_arcdir = os.path.join(archive_dir, "lzma_scroll")
     os.makedirs(lzma_arcdir, exist_ok=True)
