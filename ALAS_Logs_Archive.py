@@ -120,6 +120,8 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("-l", "--level", help="压缩等级", type=int, choices=range(0, 23), metavar="0-22")
     parser.add_argument("-w", "--workers", help="多线程设置", type=int)
     parser.add_argument("-L", "--save-logs", help="日志文件输出控制", choices=["true", "false"])
+    parser.add_argument("-C", "--console-level", help="控制台日志等级",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     parser.add_argument("-d", "--decompress", help="解压归档文件（指定ZIP文件路径）")
     parser.add_argument("-o", "--output", help="解压输出目录（与 -d 配合使用，默认为ZIP同目录下同名文件夹）")
     parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件拖放）")
@@ -172,7 +174,7 @@ def main():
         save_logs = args.save_logs.lower() == "true" if args.save_logs else False
         log_folder = "logs"
         max_log_files = 15
-        log_level = logging.INFO
+        log_level = getattr(logging, args.console_level) if args.console_level else logging.INFO
 
         logger = setup_logger(log_folder, max_log_files, log_level, save_logs)
         detect_package_type()
@@ -198,6 +200,8 @@ def main():
         save_logs = config_mgr.save_logs
 
         # 命令行参数覆盖配置文件
+        if args.console_level:
+            log_level = getattr(logging, args.console_level)
         if args.save_logs:
             save_logs = args.save_logs.lower() == "true"
 
