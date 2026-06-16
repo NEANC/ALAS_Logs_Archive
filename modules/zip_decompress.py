@@ -68,29 +68,12 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
 
             # Zip Slip 路径穿越防护
             real_output_path = os.path.realpath(output_path)
-            if not real_output_path.startswith(real_output_dir + os.sep):
-                logger.critical(f"检测到路径穿越：{info.filename} 被解压到目录之外")
-                logger.critical(f"尝试解压到: {output_path}")
-                logger.critical(f"实际解压到: {real_output_path}")
-                logger.critical(f"请检查归档文件是否被篡改")
-                # 等待用户确认再退出（CI 环境自动拒绝）
-                try:
-                    while True:
-                        answer = input("是否继续？[y/n]: ").strip().lower()
-                        if answer in ("y", "yes"):
-                            logger.debug("继续解压")
-                            break
-                        elif answer in ("n", "no"):
-                            logger.debug("退出解压")
-                            sys.exit(1)
-                        else:
-                            logger.warning(f"无效输入: '{answer}'，请输入 y 或 n")
-                except EOFError:
-                    logger.critical("非交互环境，自动退出")
-                    sys.exit(1)
-                except KeyboardInterrupt:
-                    logger.critical("用户取消操作")
-                    sys.exit(1)
+            if os.path.commonpath([real_output_dir, real_output_path]) != real_output_dir:
+                logger.critical(f"解压路径异常：{info.filename}")
+                logger.debug(f"异常解压路径: {output_path}")
+                logger.debug(f"应解压到目录: {real_output_path}")
+                logger.critical("已跳过该文件，请检查归档文件是否被篡改")
+                continue
 
             parent_dir = os.path.dirname(output_path)
             if parent_dir and not os.path.exists(parent_dir):
