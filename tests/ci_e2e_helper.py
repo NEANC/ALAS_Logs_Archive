@@ -105,7 +105,7 @@ def generate_test_data(target_dir: str) -> dict:
     return manifest
 
 
-def run_archive(args: list, cwd: str = None, timeout: int = 1800, stdin: bytes = None) -> subprocess.CompletedProcess:
+def run_archive(args: list, cwd: str = None, timeout: int = 1800) -> subprocess.CompletedProcess:
     """Run archive subprocess and print its output."""
     log(f"Run: {' '.join(args)}")
     result = subprocess.run(
@@ -113,7 +113,6 @@ def run_archive(args: list, cwd: str = None, timeout: int = 1800, stdin: bytes =
         cwd=cwd or os.getcwd(),
         capture_output=True,
         timeout=timeout,
-        input=stdin,
     )
     # Write stdout/stderr to console bypassing Python's encoding layer
     # (sys.stdout uses cp1252 on Windows CI runners, which chokes on UTF-8)
@@ -244,6 +243,7 @@ def main():
         "-l", "15",
         "-w", "4",
         "-L", "false",
+        "-C", "DEBUG",
     ])
     if result.returncode != 0:
         log("Phase 1 FAILED: archive tool exited non-zero")
@@ -269,7 +269,7 @@ def main():
     scroll_out = decompress_dir + "_scroll"
     os.makedirs(scroll_out, exist_ok=True)
     for z in scroll_zips:
-        run_archive(cmd_base + ["-d", str(z), "-o", scroll_out, "-L", "false"])
+        run_archive(cmd_base + ["-d", str(z), "-o", scroll_out, "-L", "false", "-C", "DEBUG"])
 
     expected_non_today = {k: v for k, v in manifest.items()
                           if not k.startswith(today) and not k.startswith(tomorrow)}
@@ -308,7 +308,7 @@ def main():
     inc_archive = os.path.join(archive_dir, "inc_archive.zip")
     run_archive(cmd_base + [
         "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
-        "-m", "incremental", "-c", "zstd", "-l", "15", "-w", "4", "-L", "false",
+        "-m", "incremental", "-c", "zstd", "-l", "15", "-w", "4", "-L", "false", "-C", "DEBUG",
     ])
     log("Incremental batch 1 (zstd) done")
 
@@ -337,7 +337,7 @@ def main():
 
     run_archive(cmd_base + [
         "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
-        "-m", "incremental", "-c", "lzma", "-l", "19", "-w", "4", "-L", "false",
+        "-m", "incremental", "-c", "lzma", "-l", "19", "-w", "4", "-L", "false", "-C", "DEBUG",
     ])
     log("Incremental batch 2 (lzma) done")
 
@@ -365,13 +365,13 @@ def main():
 
     run_archive(cmd_base + [
         "-t", target_dir, "-a", archive_dir, "-n", "inc_archive",
-        "-m", "incremental", "-c", "bzip2", "-l", "9", "-w", "4", "-L", "false",
+        "-m", "incremental", "-c", "bzip2", "-l", "9", "-w", "4", "-L", "false", "-C", "DEBUG",
     ])
     log("Incremental batch 3 (bzip2) done")
 
     inc_out = decompress_dir + "_inc"
     os.makedirs(inc_out, exist_ok=True)
-    run_archive(cmd_base + ["-d", inc_archive, "-o", inc_out, "-L", "false"])
+    run_archive(cmd_base + ["-d", inc_archive, "-o", inc_out, "-L", "false", "-C", "DEBUG"])
     if not verify_decompression(inc_out, all_manifest):
         sys.exit(1)
     log("Phase 2: Incremental (mixed algorithms) verification passed")
@@ -384,7 +384,7 @@ def main():
     shutil.rmtree(decompress_dir, ignore_errors=True)
     os.makedirs(decompress_dir, exist_ok=True)
     for z in scroll_zips:
-        run_archive(cmd_base + ["-d", str(z), "-o", decompress_dir, "-L", "false"])
+        run_archive(cmd_base + ["-d", str(z), "-o", decompress_dir, "-L", "false", "-C", "DEBUG"])
     if not verify_decompression(decompress_dir, expected_non_today):
         sys.exit(1)
     log("Phase 3: Standalone decompress passed")
@@ -414,6 +414,7 @@ def main():
         "-l", "15",
         "-w", "4",
         "-L", "false",
+        "-C", "DEBUG",
     ])
     try:
         os.unlink(config_ini)
@@ -430,7 +431,7 @@ def main():
     cfg_out = decompress_dir + "_cfg"
     os.makedirs(cfg_out, exist_ok=True)
     for z in cfg_zips:
-        run_archive(cmd_base + ["-d", str(z), "-o", cfg_out, "-L", "false"])
+        run_archive(cmd_base + ["-d", str(z), "-o", cfg_out, "-L", "false", "-C", "DEBUG"])
     if not verify_decompression(cfg_out, cfg_manifest):
         sys.exit(1)
     log("Phase 4: Config-file-driven mode passed")
@@ -467,7 +468,7 @@ def main():
         "-t", target_dir, "-a", lzma_arcdir,
         "-n", "lzma9_test",
         "-m", "scroll", "-c", "lzma",
-        "-l", "9", "-w", "4", "-L", "false",
+        "-l", "9", "-w", "4", "-L", "false", "-C", "DEBUG",
     ])
     lzma_zips = sorted(Path(lzma_arcdir).glob("*.zip"))
     if not lzma_zips:
@@ -476,7 +477,7 @@ def main():
     lzma_out = decompress_dir + "_lzma9"
     os.makedirs(lzma_out, exist_ok=True)
     for z in lzma_zips:
-        run_archive(cmd_base + ["-d", str(z), "-o", lzma_out, "-L", "false"])
+        run_archive(cmd_base + ["-d", str(z), "-o", lzma_out, "-L", "false", "-C", "DEBUG"])
     if not verify_decompression(lzma_out, lzma_manifest):
         sys.exit(1)
     log("Phase 5: LZMA level 9 passed")
@@ -489,66 +490,28 @@ def main():
     zip_slip_zip = os.path.join(archive_dir, "zip_slip_test.zip")
     _make_zip_slip_zip(zip_slip_zip)
 
-    # Sub-test A: no stdin → EOFError → auto-reject → exit code 1
-    slip_out_a = decompress_dir + "_slip_a"
-    os.makedirs(slip_out_a, exist_ok=True)
-    result_a = run_archive(cmd_base + ["-d", zip_slip_zip, "-o", slip_out_a, "-L", "false"])
-    if result_a.returncode != 1:
-        log(f"FAIL (A): path traversal not blocked when stdin absent, exit code {result_a.returncode}")
+    slip_out = decompress_dir + "_slip"
+    os.makedirs(slip_out, exist_ok=True)
+    result = run_archive(cmd_base + ["-d", zip_slip_zip, "-o", slip_out, "-L", "false", "-C", "DEBUG"])
+    # Path traversal file is skipped (not fatal) → exit code 0
+    if result.returncode != 0:
+        log(f"FAIL (A): path traversal caused unexpected exit code {result.returncode}")
         sys.exit(1)
-    if os.path.exists(os.path.join(slip_out_a, "escaped.txt")):
-        log("FAIL (A): path traversal file was extracted when stdin absent")
+    # Verify the traversal file was NOT extracted to output dir
+    if os.path.exists(os.path.join(slip_out, "escaped.txt")):
+        log("FAIL (A): path traversal file was extracted into output dir")
         sys.exit(1)
-    log("Phase 6A: Auto-reject (no stdin) passed")
-
-    # Sub-test B: pipe "y\n" → user confirms → exit code 0
-    slip_out_b = decompress_dir + "_slip_b"
-    os.makedirs(slip_out_b, exist_ok=True)
-    result_b = run_archive(cmd_base + ["-d", zip_slip_zip, "-o", slip_out_b, "-L", "false"],
-                           stdin=b"y\n")
-    if result_b.returncode != 0:
-        log(f"FAIL (B): confirmed path traversal not allowed, exit code {result_b.returncode}")
+    # Verify the traversal file was NOT written above output dir
+    escaped_above = os.path.realpath(os.path.join(slip_out, "..", "escaped.txt"))
+    if os.path.isfile(escaped_above):
+        log("FAIL (A): path traversal file was extracted above output dir")
         sys.exit(1)
-    escaped = os.path.realpath(os.path.join(slip_out_b, "..", "escaped.txt"))
-    if not os.path.isfile(escaped):
-        log(f"FAIL (B): path traversal file not extracted after user confirmation")
+    # Verify skip warning is in stderr/stdout
+    output_text = result.stdout.decode("utf-8", errors="replace") + result.stderr.decode("utf-8", errors="replace")
+    if "已跳过该文件" not in output_text:
+        log("FAIL (A): no skip message in output")
         sys.exit(1)
-    with open(escaped, "rb") as f:
-        if f.read().strip() != b"ESCAPED CONTENT":
-            log("FAIL (B): extracted file content mismatch")
-            sys.exit(1)
-    try:
-        os.unlink(escaped)
-    except OSError:
-        pass
-    log("Phase 6B: User-confirmed (y) passed")
-
-    # Sub-test C: pipe "\ny\n" → empty → re-prompt → y → exit 0
-    slip_out_c = decompress_dir + "_slip_c"
-    os.makedirs(slip_out_c, exist_ok=True)
-    result_c = run_archive(cmd_base + ["-d", zip_slip_zip, "-o", slip_out_c, "-L", "false"],
-                           stdin=b"\ny\n")
-    if result_c.returncode != 0:
-        log(f"FAIL (C): empty-then-y not allowed, exit code {result_c.returncode}")
-        sys.exit(1)
-    escaped = os.path.realpath(os.path.join(slip_out_c, "..", "escaped.txt"))
-    try:
-        os.unlink(escaped)
-    except OSError:
-        pass
-    log("Phase 6C: Empty-input retry passed")
-
-    # Sub-test D: pipe "no\n" → user rejects → exit code 1
-    slip_out_d = decompress_dir + "_slip_d"
-    os.makedirs(slip_out_d, exist_ok=True)
-    result_d = run_archive(cmd_base + ["-d", zip_slip_zip, "-o", slip_out_d, "-L", "false"],
-                           stdin=b"no\n")
-    if result_d.returncode != 1:
-        log(f"FAIL (D): n/no reject not honored, exit code {result_d.returncode}")
-        sys.exit(1)
-    log("Phase 6D: User-reject (no) passed")
-
-    log("Phase 6: Zip Slip protection passed")
+    log("Phase 6: Zip Slip skipped, clean files intact")
 
     log("=" * 50)
     log("ALL E2E TESTS PASSED")
