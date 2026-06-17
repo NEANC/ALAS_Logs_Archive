@@ -57,6 +57,16 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes:.2f} PB"
 
 
+def _ratio(compressed: int, original: int) -> float:
+    """压缩率 = 压缩后 / 原始 × 100"""
+    return compressed / original * 100 if original > 0 else 0.0
+
+
+def _space_saving(compressed: int, original: int) -> float:
+    """空间节省率 = (1 - 压缩后/原始) × 100"""
+    return (1 - compressed / original) * 100 if original > 0 else 0.0
+
+
 def read_file_chunked(file_path: str, chunk_size: int) -> bytes:
     """分块读取文件内容
 
@@ -193,7 +203,8 @@ def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
         except OSError:
             pass
 
-    logger.debug(f"已流式归档文件: {arcname} ({format_size(original_size)} → {format_size(compressed_size)}, 压缩用时: {time.time() - t0:.2f}s)")
+    elapsed = time.time() - t0
+    logger.debug(f"已流式归档文件: {arcname} ({format_size(original_size)} → {format_size(compressed_size)}, 压缩率: {_ratio(compressed_size, original_size):.1f}% (节省率: {_space_saving(compressed_size, original_size):.1f}%), 压缩用时: {elapsed:.2f}s)")
     return (arcname, original_size, compressed_size)
 
 
@@ -362,7 +373,7 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
                         zinfo.compress_type = zipfile.ZIP_STORED
                         zipf.writestr(zinfo, compressed_data)
                         total_original += orig_size
-                        logger.debug(f"已归档文件: {arcname} ({format_size(orig_size)} → {format_size(len(compressed_data))}，压缩用时: {elapsed:.2f}s)")
+                        logger.debug(f"已归档文件: {arcname} ({format_size(orig_size)} → {format_size(len(compressed_data))}, 压缩率: {_ratio(len(compressed_data), orig_size):.1f}% (节省率: {_space_saving(len(compressed_data), orig_size):.1f}%), 压缩用时: {elapsed:.2f}s)")
                         del compressed_data  # 立即释放内存
                     except Exception as e:
                         logger.error(f"压缩文件 {file_path} 失败: {e}")
@@ -403,14 +414,12 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
     # 统计信息
     if incremental_mode:
         added_compressed = final_size - existing_size
-        compression_ratio = (1 - added_compressed / total_original) * 100 if total_original > 0 else 0
         logger.info(f"新增了 {len(files)} 个文件到增量归档，已保存到: {archive_path}")
-        logger.info(f"新增原始大小: {format_size(total_original)}，新增压缩大小: {format_size(added_compressed)}，压缩率: {compression_ratio:.2f}%")
+        logger.info(f"新增原始大小: {format_size(total_original)}，新增压缩大小: {format_size(added_compressed)}，压缩率: {_ratio(added_compressed, total_original):.1f}% (节省率: {_space_saving(added_compressed, total_original):.1f}%)")
         logger.info(f"归档总大小: {format_size(final_size)}")
     else:
-        compression_ratio = (1 - final_size / total_original) * 100 if total_original > 0 else 0
         logger.info(f"已完成归档，已保存到: {archive_path}")
-        logger.info(f"原始大小: {format_size(total_original)}，压缩后大小: {format_size(final_size)}，压缩率: {compression_ratio:.2f}%")
+        logger.info(f"原始大小: {format_size(total_original)}，压缩后大小: {format_size(final_size)}，压缩率: {_ratio(final_size, total_original):.1f}% (节省率: {_space_saving(final_size, total_original):.1f}%)")
 
     logger.info("完整性校验通过，开始删除原始文件")
     deleted_count = 0
