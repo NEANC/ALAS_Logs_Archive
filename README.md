@@ -43,19 +43,20 @@
 
 程序支持通过命令行参数覆盖配置文件中的设置：
 
-| 参数            | 短参数 | 说明                                | 示例                             |
-| --------------- | ------ | ----------------------------------- | -------------------------------- |
-| `--help`        | `-h`   | 显示帮助信息                        |                                  |
-| `--target`      | `-t`   | 目标文件夹路径                      | `-t "C:\AzurLaneAutoScript\log"` |
-| `--archive`     | `-a`   | 存档文件夹路径                      | `-a "D:\ALAS_Logs"`              |
-| `--name`        | `-n`   | 存档文件名（支持 {date} 占位符）    | `-n "备份_{date}.zip"`           |
-| `--compression` | `-c`   | 压缩算法：`zstd` / `lzma` / `bzip2` | `-c lzma`                        |
-| `--level`       | `-l`   | 压缩等级 1-9                        | `-l 9`                           |
-| `--mode`        | `-m`   | 存档模式（滚动 或 增量）            | `-m scroll` 或 `-m incremental`  |
-| `--workers`     | `-w`   | 压缩时的并发线程数                  | `-w 4`                           |
-| `--save-logs`   | `-L`   | 日志文件输出控制                    | `-L false`                       |
-| `--decompress`  | `-d`   | 解压指定 ZIP 文件（需指定文件路径） | `-d "D:\ALAS_Logs\存档.zip"`     |
-| `--output`      | `-o`   | 解压输出目录（配合 `-d`）           | `-o "E:\ALAS_存档"`              |
+| 参数              | 短参数 | 说明                                | 示例                             |
+| ----------------- | ------ | ----------------------------------- | -------------------------------- |
+| `--help`          | `-h`   | 显示帮助信息                        |                                  |
+| `--target`        | `-t`   | 目标文件夹路径                      | `-t "C:\AzurLaneAutoScript\log"` |
+| `--archive`       | `-a`   | 存档文件夹路径                      | `-a "D:\ALAS_Logs"`              |
+| `--name`          | `-n`   | 存档文件名（支持 {date} 占位符）    | `-n "备份_{date}.zip"`           |
+| `--compression`   | `-c`   | 压缩算法：`zstd` / `lzma` / `bzip2` | `-c lzma`                        |
+| `--level`         | `-l`   | 压缩等级 1-9                        | `-l 9`                           |
+| `--mode`          | `-m`   | 存档模式（滚动 或 增量）            | `-m scroll` 或 `-m incremental`  |
+| `--workers`       | `-w`   | 压缩时的并发线程数                  | `-w 4`                           |
+| `--save-logs`     | `-L`   | 日志文件输出控制                    | `-L false`                       |
+| `--decompress`    | `-d`   | 解压指定 ZIP 文件（需指定文件路径） | `-d "D:\ALAS_Logs\存档.zip"`     |
+| `--output`        | `-o`   | 解压输出目录（配合 `-d`）           | `-o "E:\ALAS_存档"`              |
+| `--console-level` | `-C`   | 控制台日志等级                      | `-C DEBUG`                       |
 
 #### 示例
 

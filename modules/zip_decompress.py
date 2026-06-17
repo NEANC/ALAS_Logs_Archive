@@ -45,11 +45,11 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
         logger: 日志记录器
     """
     if not os.path.exists(archive_path):
-        logger.error(f"归档文件不存在: {archive_path}")
+        logger.critical(f"归档文件不存在: {archive_path}")
         sys.exit(1)
 
     if not zipfile.is_zipfile(archive_path):
-        logger.error(f"文件不是有效的ZIP归档: {archive_path}")
+        logger.critical(f"文件不是有效的ZIP归档: {archive_path}")
         sys.exit(1)
 
     if not os.path.exists(output_dir):
@@ -68,29 +68,11 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
 
             # Zip Slip 路径穿越防护
             real_output_path = os.path.realpath(output_path)
-            if not real_output_path.startswith(real_output_dir + os.sep):
-                logger.critical(f"检测到路径穿越：{info.filename} 被解压到目录之外")
-                logger.critical(f"尝试解压到: {output_path}")
-                logger.critical(f"实际解压到: {real_output_path}")
-                logger.critical(f"请检查归档文件是否被篡改")
-                # 等待用户确认再退出（CI 环境自动拒绝）
-                try:
-                    while True:
-                        answer = input("是否继续？[y/n]: ").strip().lower()
-                        if answer in ("y", "yes"):
-                            logger.debug("继续解压")
-                            break
-                        elif answer in ("n", "no"):
-                            logger.debug("退出解压")
-                            sys.exit(1)
-                        else:
-                            logger.warning(f"无效输入: '{answer}'，请输入 y 或 n")
-                except EOFError:
-                    logger.critical("非交互环境，自动退出")
-                    sys.exit(1)
-                except KeyboardInterrupt:
-                    logger.critical("用户取消操作")
-                    sys.exit(1)
+            if os.path.commonpath([real_output_dir, real_output_path]) != real_output_dir:
+                logger.warning(f"{os.path.basename(info.filename)} 文件解压路径异常: {output_path}")
+                logger.warning(f"应解压到: {real_output_path}")
+                logger.warning("已跳过该文件，请检查归档文件是否被篡改")
+                continue
 
             parent_dir = os.path.dirname(output_path)
             if parent_dir and not os.path.exists(parent_dir):
@@ -124,7 +106,7 @@ def _decompress_entry_streaming(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,
     with zipf.open(info, 'r') as src:
         magic = src.read(6)
     algo = _detect_compression_algorithm(magic)
-    logger.debug(f"检测到压缩算法: {algo}，文件: {info.filename}")
+    logger.debug(f"确认文件: {os.path.basename(info.filename)} 的压缩算法为: {algo}，将文件解压到: {output_path}")
 
     # 重新打开，流式解压写入
     with zipf.open(info, 'r') as src, open(output_path, 'wb') as dst:

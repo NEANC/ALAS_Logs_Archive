@@ -72,7 +72,7 @@ class TestCompressFile:
             tmp_path = f.name
 
         try:
-            name, compressed, orig_size = compress_file(tmp_path, "bzip2", 9, 8192)
+            name, compressed, orig_size, _ = compress_file(tmp_path, "bzip2", 9, 8192)
             assert name.endswith(".txt")
             assert orig_size == len(data)
             assert len(compressed) < len(data)  # 压缩后应更小
@@ -91,7 +91,7 @@ class TestCompressFile:
             tmp_path = f.name
 
         try:
-            name, compressed, orig_size = compress_file(tmp_path, "lzma", 9, 8192)
+            name, compressed, orig_size, _ = compress_file(tmp_path, "lzma", 9, 8192)
             assert name.endswith(".txt")
             assert orig_size == len(data)
             # 验证可以正确解压
@@ -110,7 +110,7 @@ class TestCompressFile:
             tmp_path = f.name
 
         try:
-            name, compressed, orig_size = compress_file(tmp_path, "lzma", level, 8192)
+            name, compressed, orig_size, _ = compress_file(tmp_path, "lzma", level, 8192)
             assert name.endswith(".txt")
             assert orig_size == len(data)
             assert len(compressed) < len(data)
@@ -129,7 +129,7 @@ class TestCompressFile:
             tmp_path = f.name
 
         try:
-            name, compressed, orig_size = compress_file(tmp_path, "zstd", 9, 8192)
+            name, compressed, orig_size, _ = compress_file(tmp_path, "zstd", 9, 8192)
             assert name.endswith(".txt")
             assert orig_size == len(data)
             assert len(compressed) < len(data)
@@ -161,7 +161,7 @@ class TestCompressFile:
             tmp_path = f.name
 
         try:
-            name, compressed, orig_size = compress_file(tmp_path, "bzip2", 9, 8192)
+            name, compressed, orig_size, _ = compress_file(tmp_path, "bzip2", 9, 8192)
             assert name == os.path.basename(tmp_path)
         finally:
             os.unlink(tmp_path)
