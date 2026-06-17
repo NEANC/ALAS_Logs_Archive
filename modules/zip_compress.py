@@ -182,7 +182,7 @@ def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
         with zipf.open(zinfo, 'w') as zip_entry:
             with open(temp_path, 'rb') as src:
                 while True:
-                    chunk = src.read(8192)
+                    chunk = src.read(chunk_size)
                     if not chunk:
                         break
                     zip_entry.write(chunk)
