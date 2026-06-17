@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [E2E Build Test]
+    types:
+      - completed
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch != '' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    steps:
+      - name: Find build workflow run ID
+        id: build_run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // The E2E Build Test workflow_run was triggered by the Build workflow.
+            // Look up the Build run that triggered this E2E run via workflow_run.
+            const e2eRunId = context.payload.workflow_run.id;
+            const { data: jobs } = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: e2eRunId,
+            });
+            // The triggering workflow is referenced in the run, but not directly accessible.
+            // Instead, find the Build run via the GitHub API.
+            // Search for completed Build workflow runs with matching head_branch and head_sha.
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'Build',
+              branch: context.payload.workflow_run.head_branch,
+              head_sha: context.payload.workflow_run.head_sha,
+              status: 'success',
+              per_page: 5,
+            });
+            const buildRun = runs.workflow_runs[0];
+            if (!buildRun) {
+              core.setFailed('Could not find Build workflow run');
+              return;
+            }
+            core.setOutput('run_id', buildRun.id);
+            core.setOutput('tag', context.payload.workflow_run.head_branch);
+            console.log(`Build run ID: ${buildRun.id}, tag: ${context.payload.workflow_run.head_branch}`);
+
+      - name: Download all artifacts from build workflow
+        uses: actions/download-artifact@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.build_run.outputs.run_id }}
+          path: assets
+
+      - name: Clean up and prepare release
+        run: |
+          mkdir -p release
+          TAG="${{ steps.build_run.outputs.tag }}"
+
+          # Move Nuitka build
+          find assets -path "*Nuitka*$TAG*/ALAS_Logs_Archive.exe" -exec cp {} "release/ALAS_Logs_Archive-Nuitka-${TAG}.exe" \;
+
+          # Move PyInstaller build
+          find assets -path "*PyInstaller*$TAG*/ALAS_Logs_Archive.exe" -exec cp {} "release/ALAS_Logs_Archive-PyInstaller-${TAG}.exe" \;
+
+          # Copy changelog
+          if [ -f "assets/changelog/CHANGELOG.md" ]; then
+            cp "assets/changelog/CHANGELOG.md" "release/CHANGELOG.md"
+          fi
+
+          rm -rf assets
+          ls -la release/
+
+      - name: Determine prerelease flag
+        id: prerelease
+        run: |
+          TAG="${{ steps.build_run.outputs.tag }}"
+          if echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Publish release to GitHub
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.build_run.outputs.tag }}
+          name: ${{ steps.build_run.outputs.tag }}
+          body_path: release/CHANGELOG.md
+          files: |
+            release/*.exe
+            release/CHANGELOG.md
+          prerelease: ${{ steps.prerelease.outputs.prerelease }}
