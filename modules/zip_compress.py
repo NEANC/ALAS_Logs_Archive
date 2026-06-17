@@ -77,7 +77,7 @@ def read_file_chunked(file_path: str, chunk_size: int) -> bytes:
     return b"".join(chunks)
 
 
-def compress_file(file_path: str, compression_algorithm: str, compression_level: int, chunk_size: int) -> Tuple[str, bytes, int]:
+def compress_file(file_path: str, compression_algorithm: str, compression_level: int, chunk_size: int) -> Tuple[str, bytes, int, float]:
     """压缩单个文件
 
     Args:
@@ -87,8 +87,9 @@ def compress_file(file_path: str, compression_algorithm: str, compression_level:
         chunk_size: 块大小
 
     Returns:
-        Tuple[str, bytes, int]: (文件名, 压缩后的数据, 原始大小)
+        Tuple[str, bytes, int, float]: (文件名, 压缩后的数据, 原始大小, 耗时秒)
     """
+    t0 = time.time()
     data = read_file_chunked(file_path, chunk_size)
     original_size = len(data)
 
@@ -108,7 +109,7 @@ def compress_file(file_path: str, compression_algorithm: str, compression_level:
     else:
         raise ValueError(f"不支持的压缩算法: {compression_algorithm}")
 
-    return (os.path.basename(file_path), compressed_data, original_size)
+    return (os.path.basename(file_path), compressed_data, original_size, time.time() - t0)
 
 
 def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
@@ -354,15 +355,13 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
                 for future in concurrent.futures.as_completed(futures):
                     file_path = futures[future]
                     try:
-                        t1 = time.time()
-                        arcname, compressed_data, orig_size = future.result()
+                        arcname, compressed_data, orig_size, elapsed = future.result()
                         zinfo = zipfile.ZipInfo(arcname, time.localtime()[:6])
                         zinfo.file_size = orig_size
                         zinfo.compress_size = len(compressed_data)
                         zinfo.compress_type = zipfile.ZIP_STORED
                         zipf.writestr(zinfo, compressed_data)
                         total_original += orig_size
-                        elapsed = time.time() - t1
                         logger.debug(f"已归档文件: {arcname} ({format_size(orig_size)} → {format_size(len(compressed_data))}，压缩用时: {elapsed:.2f}s)")
                         del compressed_data  # 立即释放内存
                     except Exception as e:
