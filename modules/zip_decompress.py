@@ -45,11 +45,11 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
         logger: 日志记录器
     """
     if not os.path.exists(archive_path):
-        logger.error(f"归档文件不存在: {archive_path}")
+        logger.critical(f"归档文件不存在: {archive_path}")
         sys.exit(1)
 
     if not zipfile.is_zipfile(archive_path):
-        logger.error(f"文件不是有效的ZIP归档: {archive_path}")
+        logger.critical(f"文件不是有效的ZIP归档: {archive_path}")
         sys.exit(1)
 
     if not os.path.exists(output_dir):
@@ -70,7 +70,7 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
             real_output_path = os.path.realpath(output_path)
             if os.path.commonpath([real_output_dir, real_output_path]) != real_output_dir:
                 logger.warning(f"{os.path.basename(info.filename)} 文件解压路径异常: {output_path}")
-                logger.warning(f"应解压到目录: {real_output_path}")
+                logger.warning(f"应解压到: {real_output_path}")
                 logger.warning("已跳过该文件，请检查归档文件是否被篡改")
                 continue
 
@@ -106,7 +106,7 @@ def _decompress_entry_streaming(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,
     with zipf.open(info, 'r') as src:
         magic = src.read(6)
     algo = _detect_compression_algorithm(magic)
-    logger.debug(f"检测到压缩算法: {algo}，文件: {info.filename}")
+    logger.debug(f"确认文件: {os.path.basename(info.filename)} 的压缩算法为: {algo}，将文件解压到: {output_path}")
 
     # 重新打开，流式解压写入
     with zipf.open(info, 'r') as src, open(output_path, 'wb') as dst:

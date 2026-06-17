@@ -113,7 +113,7 @@ class ConfigManager:
             log_func = getattr(self._logger, level, self._logger.info)
             log_func(msg)
         else:
-            prefix = {'info': '', 'warning': '警告: ', 'error': '错误: ', 'critical': '致命: '}
+            prefix = {'info': '信息: ', 'warning': '警告: ', 'error': '错误: ', 'critical': '致命: '}
             print(f"{prefix.get(level, '')}{msg}")
 
     def set_logger(self, logger: logging.Logger) -> None:

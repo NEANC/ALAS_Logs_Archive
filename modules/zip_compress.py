@@ -252,7 +252,7 @@ def _verify_archive_entries(archive_path: str, all_files: List[str],
                         logger.error(f"LZMA 解压验证失败 {arcname}: {e}")
                         failed.add(arcname)
     except Exception as e:
-        logger.error(f"无法打开归档进行完整性校验: {e}")
+        logger.critical(f"无法打开归档进行完整性校验: {e}")
         return expected_names  # 全部视为失败
 
     return failed
