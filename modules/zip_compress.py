@@ -130,6 +130,7 @@ def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
     Returns:
         (arcname, original_size, compressed_size)
     """
+    t0 = time.time()
     algo = compression_algorithm.lower()
     level = _normalize_level(algo, compression_level)
     arcname = os.path.basename(file_path)
@@ -191,7 +192,7 @@ def _stream_compress_to_zip(file_path: str, compression_algorithm: str,
         except OSError:
             pass
 
-    logger.debug(f"已流式归档文件: {arcname} ({format_size(original_size)} → {format_size(compressed_size)})")
+    logger.debug(f"已流式归档文件: {arcname} ({format_size(original_size)} → {format_size(compressed_size)}, 压缩用时: {time.time() - t0:.2f}s)")
     return (arcname, original_size, compressed_size)
 
 
@@ -353,6 +354,7 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
                 for future in concurrent.futures.as_completed(futures):
                     file_path = futures[future]
                     try:
+                        t1 = time.time()
                         arcname, compressed_data, orig_size = future.result()
                         zinfo = zipfile.ZipInfo(arcname, time.localtime()[:6])
                         zinfo.file_size = orig_size
@@ -360,6 +362,8 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
                         zinfo.compress_type = zipfile.ZIP_STORED
                         zipf.writestr(zinfo, compressed_data)
                         total_original += orig_size
+                        elapsed = time.time() - t1
+                        logger.debug(f"已归档文件: {arcname} ({format_size(orig_size)} → {format_size(len(compressed_data))}，压缩用时: {elapsed:.2f}s)")
                         del compressed_data  # 立即释放内存
                     except Exception as e:
                         logger.error(f"压缩文件 {file_path} 失败: {e}")
