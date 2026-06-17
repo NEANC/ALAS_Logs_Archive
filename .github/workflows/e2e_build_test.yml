@@ -1,13 +1,10 @@
-name: E2E Test
+name: E2E Build Test
 
 on:
-  # 构建成功后自动触发（获取构建产物进行 exe 模式测试）
   workflow_run:
     workflows: [Build]
     types:
       - completed
-  # 允许手动运行（源码模式）
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -18,101 +15,23 @@ env:
   PYTHONUTF8: '1'
 
 jobs:
-  # 源码模式 — 多平台并行 (linux / macos / windows)
-  e2e-source:
-    name: "Source (${{ matrix.os }})"
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    steps:
-      - name: Check-out repository
-        uses: actions/checkout@v6
-        with:
-          # workflow_run 使用触发分支，workflow_dispatch 使用选择分支
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
-
-      # 检查当前 Python 版本
-      - name: Check Python
-        id: check_python
-        shell: bash
-        run: |
-          PYTHON_VERSION=$(python --version 2>&1 || python3 --version 2>&1)
-          echo "Detected Python version: $PYTHON_VERSION"
-
-          if echo "$PYTHON_VERSION" | grep -i "python 3\.12"; then
-            echo "python_version=3.12" >> $GITHUB_OUTPUT
-            echo "skip_setup=true" >> $GITHUB_OUTPUT
-          else
-            echo "skip_setup=false" >> $GITHUB_OUTPUT
-          fi
-
-      # 设置 Python 环境（仅当版本不是 3.12 时）
-      - name: Setup Python
-        if: steps.check_python.outputs.skip_setup != 'true'
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Restore pip cache
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ runner.arch }}-py${{ steps.check_python.outputs.python_version || '3.12' }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            pip-${{ runner.os }}-${{ runner.arch }}-py${{ steps.check_python.outputs.python_version || '3.12' }}-
-            pip-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Prepare temp directories
-        shell: bash
-        run: |
-          echo "CI_TARGET=$(mktemp -d)" >> $GITHUB_ENV
-          echo "CI_ARCHIVE=$(mktemp -d)" >> $GITHUB_ENV
-
-      - name: Run E2E source mode
-        shell: bash
-        run: |
-          python tests/ci_e2e_helper.py \
-            --mode source \
-            --target "$CI_TARGET" \
-            --archive "$CI_ARCHIVE"
-
-      - name: Upload debug artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-source-${{ matrix.os }}-logs
-          path: |
-            logs/*.log
-          retention-days: 3
-
-  # EXE 产物模式 — Windows 专用，从 build workflow 拉取 exe
   e2e-exe-nuitka:
     name: "EXE-Nuitka (windows)"
     runs-on: windows-latest
     timeout-minutes: 60
-    if: |
-      github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Check-out repository
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+          ref: ${{ github.event.workflow_run.head_branch }}
 
       # 检查当前 Python 版本
       - name: Check Python
         id: check_python
         shell: bash
         run: |
-          # 检查 Python 版本
           PYTHON_VERSION=$(python --version 2>&1 || python3 --version 2>&1)
           echo "Detected Python version: $PYTHON_VERSION"
           
@@ -163,7 +82,7 @@ jobs:
             $exe = Get-ChildItem -Recurse -Filter "ALAS_Logs_Archive.exe" | Select-Object -First 1
           }
           if (-not $exe) {
-            Write-Error "未找到 ALAS_Logs_Archive.exe"
+            Write-Error "Nuitka: 未找到 ALAS_Logs_Archive.exe"
             exit 1
           }
           Write-Host "EXE: $($exe.FullName)"
@@ -200,21 +119,19 @@ jobs:
     name: "EXE-PyInstaller (windows)"
     runs-on: windows-latest
     timeout-minutes: 60
-    if: |
-      github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Check-out repository
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+          ref: ${{ github.event.workflow_run.head_branch }}
 
       # 检查当前 Python 版本
       - name: Check Python
         id: check_python
         shell: bash
         run: |
-          # 检查 Python 版本
           PYTHON_VERSION=$(python --version 2>&1 || python3 --version 2>&1)
           echo "Detected Python version: $PYTHON_VERSION"
           
@@ -262,7 +179,7 @@ jobs:
                  Where-Object { $_.DirectoryName -match "PyInstaller" } |
                  Select-Object -First 1
           if (-not $exe) {
-            Write-Error "未找到 PyInstaller 构建的 ALAS_Logs_Archive.exe"
+            Write-Error "PyInstaller: 未找到 ALAS_Logs_Archive.exe"
             exit 1
           }
           Write-Host "EXE: $($exe.FullName)"
@@ -294,27 +211,3 @@ jobs:
           path: |
             logs/*.log
           retention-days: 3
-
-  # 汇总
-  summary:
-    name: E2E Summary
-    needs: [e2e-source, e2e-exe-nuitka, e2e-exe-pyinstaller]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check results
-        run: |
-          echo "source=${{ needs.e2e-source.result }}"
-          echo "nuitka=${{ needs.e2e-exe-nuitka.result }}"
-          echo "pyinstaller=${{ needs.e2e-exe-pyinstaller.result }}"
-
-          failed=""
-          [[ "${{ needs.e2e-source.result }}" != "success" ]] && failed="$failed source"
-          [[ "${{ needs.e2e-exe-nuitka.result }}" == "failure" ]] && failed="$failed nuitka"
-          [[ "${{ needs.e2e-exe-pyinstaller.result }}" == "failure" ]] && failed="$failed pyinstaller"
-
-          if [[ -n "$failed" ]]; then
-            echo "E2E failures:$failed"
-            exit 1
-          fi
-          echo "All E2E tests passed"
