@@ -8,7 +8,10 @@ import os
 import shutil
 import sys
 import zipfile
+
 import zstandard as zstd
+
+from modules.progress_bar import make_byte_bar
 
 # 压缩算法 magic bytes（6 字节足够区分全部格式）
 ZSTD_MAGIC = b"\x28\xB5\x2F\xFD"
@@ -60,9 +63,12 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
     with zipfile.ZipFile(archive_path, "r") as zipf:
         entries = [info for info in zipf.infolist() if not info.filename.endswith("/")]
         total_entries = len(entries)
-        logger.info(f"归档中共有 {total_entries} 个文件，开始解压")
+        total_bytes = sum(info.file_size for info in entries)
+        logger.info(f"归档中共有 {total_entries} 个文件（{total_bytes:,} bytes），开始解压")
 
+        pbar = make_byte_bar(total_bytes, desc="正在解压: ")
         extracted_count = 0
+        skipped_count = 0
         for info in entries:
             output_path = os.path.join(output_dir, info.filename)
 
@@ -72,6 +78,9 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
                 logger.warning(f"{os.path.basename(info.filename)} 文件解压路径异常: {output_path}")
                 logger.warning(f"应解压到: {real_output_path}")
                 logger.warning("已跳过该文件，请检查归档文件是否被篡改")
+                skipped_count += 1
+                pbar.update(info.file_size)
+                pbar.set_description(f"正在解压 (已跳过 {skipped_count} 个文件)")
                 continue
 
             parent_dir = os.path.dirname(output_path)
@@ -82,11 +91,14 @@ def decompress_archive(archive_path: str, output_dir: str, logger: logging.Logge
             _decompress_entry_streaming(zipf, info, output_path, logger)
 
             extracted_count += 1
-            progress = (extracted_count / total_entries) * 100
-            print(f"\r解压进度: {progress:.1f}% ({extracted_count}/{total_entries})", end="", flush=True)
+            pbar.update(info.file_size)
+            pbar.set_description(f"正在解压 ({os.path.basename(info.filename)})")
 
-    print("\r" + " " * 80 + "\r", end="", flush=True)
+        pbar.close()
+
     logger.info(f"解压完成，共 {extracted_count} 个文件，输出到: {output_dir}")
+    if skipped_count:
+        logger.warning(f"共跳过 {skipped_count} 个异常文件")
 
 
 def _decompress_entry_streaming(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,

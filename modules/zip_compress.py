@@ -10,10 +10,13 @@ import os
 import tempfile
 import time
 import zipfile
-import zstandard as zstd
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import List, Tuple, Set
+
+import zstandard as zstd
+from typing import List, Set, Tuple
+
+from modules.progress_bar import make_byte_bar
 
 # 压缩相关硬编码参数
 # 各算法支持的压缩等级范围
@@ -346,7 +349,8 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
     if large_files:
         logger.info(f"检测到 {len(large_files)} 个大文件（>256MB），将对其使用流式压缩")
     total_files = len(small_files) + len(large_files)
-    logger.info(f"开始压缩 {total_files} 个文件，使用 {max_workers} 个线程")
+    total_bytes = sum(os.path.getsize(fp) for fp in small_files + large_files)
+    logger.info(f"开始压缩 {total_files} 个文件（{format_size(total_bytes)}），使用 {max_workers} 个线程")
 
     start_time = time.time()
     zip_mode = "a" if incremental_mode and os.path.exists(archive_path) else "w"
@@ -355,6 +359,8 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
     failed_files = []  # 记录压缩失败的源文件路径
 
     with zipfile.ZipFile(archive_path, zip_mode, zipfile.ZIP_STORED) as zipf:
+
+        pbar = make_byte_bar(total_bytes, desc="正在压缩: ")
 
         # 并发压缩小文件
         if small_files:
@@ -378,8 +384,10 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
                     except Exception as e:
                         logger.error(f"压缩文件 {file_path} 失败: {e}")
                         failed_files.append(file_path)
+                        orig_size = os.path.getsize(file_path)
                     processed_count += 1
-                    print(f"\r压缩进度: {processed_count / total_files * 100:.1f}% ({processed_count}/{total_files})", end="", flush=True)
+                    pbar.update(orig_size)
+                    pbar.set_description(f"正在压缩 ({os.path.basename(file_path)})")
 
         # 大文件流式压缩（单线程顺序）
         for file_path in large_files:
@@ -390,10 +398,12 @@ def create_archive_generic(files: List[str], archive_path: str, compression_algo
             except Exception as e:
                 logger.error(f"流式压缩文件 {file_path} 失败: {e}")
                 failed_files.append(file_path)
+                orig_size = os.path.getsize(file_path)
             processed_count += 1
-            print(f"\r压缩进度: {processed_count / total_files * 100:.1f}% ({processed_count}/{total_files})", end="", flush=True)
+            pbar.update(orig_size)
+            pbar.set_description(f"正在压缩 ({os.path.basename(file_path)})")
 
-    print("\r" + " " * 80 + "\r", end="", flush=True)
+        pbar.close()
 
     elapsed_time = time.time() - start_time
     final_size = os.path.getsize(archive_path)
