@@ -8,14 +8,19 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from functools import partial
+from typing import List
 
 from modules.alas_logger_processor import delete_error_folder, delete_gui_files
 from modules.config_manager import CONFIG_FILE, ConfigManager
+from modules.download_manager import download_with_progress
 from modules.logger_manager import setup_logger
 from modules.version import VERSION, print_info
 from modules.zip_compress import create_archive
 from modules.zip_decompress import decompress_archive
+from modules.self_updater import SelfUpdater
+from modules.config_self_updater import UpdateState
+from modules.self_utils import detect_package_type
 
 # 1MB，文件读写块大小
 CHUNK_SIZE = 1048576
@@ -73,38 +78,6 @@ def get_files_to_archive(target_folder: str, current_date: str, logger: logging.
     return files_to_archive
 
 
-def detect_package_type() -> Tuple[bool, str]:
-    """检测当前运行环境是否为打包后的可执行文件
-
-    Returns:
-        (是否为打包后程序, 打包方式名称)
-    """
-    # 使用 sys.argv[0] 统一判断源码模式：.py 脚本即为源码运行
-    # 在 PyInstaller/Nuitka 打包后，sys.argv[0] 指向 .exe，不会以 .py 结尾
-    is_py_script = Path(sys.argv[0]).suffix.lower() == '.py'
-    # 兜底：检查打包标识
-    is_pyinstaller = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
-    is_nuitka = hasattr(sys, '__compiled__')
-
-    is_bundled = (not is_py_script) or is_pyinstaller or is_nuitka
-
-    logger = logging.getLogger(__name__)
-
-    if is_pyinstaller:
-        local_package_type = "PyInstaller"
-    elif is_nuitka:
-        local_package_type = "Nuitka"
-    else:
-        local_package_type = "Nuitka"
-
-    if is_bundled:
-        logger.debug(f"运行环境: {local_package_type}")
-    else:
-        logger.debug(f"运行环境: 源码模式")
-
-    return is_bundled, local_package_type
-
-
 def parse_command_line_args() -> argparse.Namespace:
     """解析命令行参数
 
@@ -124,6 +97,7 @@ def parse_command_line_args() -> argparse.Namespace:
                         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     parser.add_argument("-d", "--decompress", help="解压归档文件（指定ZIP文件路径）")
     parser.add_argument("-o", "--output", help="解压输出目录（与 -d 配合使用，默认为ZIP同目录下同名文件夹）")
+    parser.add_argument("-S", "--self-update", help="检查并执行自身更新", action="store_true")
     parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件拖放）")
     return parser.parse_args()
 
@@ -151,6 +125,35 @@ def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = Fal
     except Exception as e:
         logger.error(f"解压失败: {e}")
         raise
+
+
+def _handle_update_state(logger: logging.Logger) -> None:
+    """检查并处理中断的更新状态（回滚、验证、清除失效记录）"""
+    state = UpdateState.load()
+    if not state:
+        return
+
+    current_state = state.get("State", "state", fallback="idle")
+    if current_state == "verified":
+        logger.info("上次更新已成功完成")
+        SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+        state.delete()
+    elif current_state == "rollback_done":
+        logger.warning("上次更新已回滚")
+        state.delete()
+    elif current_state == "failed_disabled":
+        failed_ver = state["new_version"]
+        logger.warning(f"版本 {failed_ver} 此前更新失败，已禁用自动更新。手动运行 `-S` 重新尝试")
+    elif current_state in ("downloaded_verified", "helper_started", "replacing",
+                            "pending_new_verify", "rollback"):
+        logger.warning(f"检测到未完成的更新（状态: {current_state}），尝试回滚...")
+        SelfUpdater.rollback(logger)
+        SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+
+
+def get_temp_folder() -> str:
+    """获取临时文件夹路径（与 exe 同目录）"""
+    return str(Path(sys.argv[0]).resolve().parent / ".temp")
 
 
 def main():
@@ -213,8 +216,40 @@ def main():
         config_mgr.set_logger(logger)
 
         # 检测运行环境
-        detect_package_type()
+        is_bundled, package_type = detect_package_type()
         logger.debug(f"版本号: {VERSION}")
+
+        # ── 自更新：中断恢复 ──
+        _handle_update_state(logger)
+
+        # ── 自更新：检查新版本 ──
+        temp_folder = get_temp_folder()
+        if is_bundled and config_mgr.self_update_enabled:
+            try:
+                download_func = partial(
+                    download_with_progress,
+                    proxy=config_mgr.github_proxy,
+                    logger=logger,
+                )
+                updater = SelfUpdater(
+                    github_repo="NEANC/ALAS_Logs_Archive",
+                    asset_pattern=r"^ALAS_Logs_Archive-(Nuitka|PyInstaller)-v[\d.]+.*\.exe$",
+                    app_name="ALAS_Logs_Archive",
+                    current_version=VERSION,
+                    proxy=config_mgr.github_proxy,
+                    temp_folder=temp_folder,
+                    logger=logger,
+                    download_func=download_func,
+                    self_update_channel=config_mgr.self_update_channel,
+                    is_bundled=is_bundled,
+                    package_type=package_type,
+                )
+                force = bool(args.self_update)
+                need_exit = updater.check_self_update(force=force)
+                if need_exit:
+                    return
+            except Exception as e:
+                logger.warning(f"自更新检查跳过: {e}")
 
         target_folder = args.target if args.target else config_mgr.target_folder
         archive_folder = args.archive if args.archive else config_mgr.archive_folder
