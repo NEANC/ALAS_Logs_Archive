@@ -301,8 +301,6 @@ class SelfUpdater:
                 self.logger.error("未能获取版本号")
                 return False
 
-            self.logger.debug(f"远程版本: {latest_version}")
-
             if not force and is_build_tag(self.current_version):
                 self.logger.info("当前为 Build 版本，跳过更新")
                 return False
