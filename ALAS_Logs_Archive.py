@@ -97,10 +97,17 @@ def parse_command_line_args() -> argparse.Namespace:
                         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     parser.add_argument("-d", "--decompress", help="解压归档文件（指定ZIP文件路径）")
     parser.add_argument("-o", "--output", help="解压输出目录（与 -d 配合使用，默认为ZIP同目录下同名文件夹）")
-    parser.add_argument("-S", "--self-update", help="检查并执行自身更新", action="store_true")
+    parser.add_argument("--update", "--Update", action="store_true",
+                        dest="update", default=False,
+                        help="仅检查自身更新")
     parser.add_argument("--update-force", "--Update-force", "--Update-Force",
                         action="store_true", dest="update_force", default=False,
                         help="强制更新自身到最新版本")
+    parser.add_argument("--self-update-verify", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-sha256", type=str, default="", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-version", type=str, default="", help=argparse.SUPPRESS)
+    parser.add_argument("--retry-update", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--update-failed", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件拖放）")
     return parser.parse_args()
 
@@ -122,7 +129,6 @@ def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = Fal
     try:
         decompress_archive(archive_path, output_dir, logger)
     except KeyboardInterrupt:
-        print("\r" + " " * 80 + "\r", end="", flush=True)
         logger.warning("捕获到Ctrl+C，终止运行")
         sys.exit(0)
     except Exception as e:
@@ -146,7 +152,7 @@ def _handle_update_state(logger: logging.Logger) -> None:
         state.delete()
     elif current_state == "failed_disabled":
         failed_ver = state["new_version"]
-        logger.warning(f"版本 {failed_ver} 此前更新失败，已禁用自动更新。手动运行 `-S` 重新尝试")
+        logger.warning(f"版本 {failed_ver} 此前更新失败，已禁用自动更新。")
     elif current_state in ("downloaded_verified", "helper_started", "replacing",
                             "pending_new_verify", "rollback"):
         logger.warning(f"检测到未完成的更新（状态: {current_state}），尝试回滚...")
@@ -163,9 +169,88 @@ def get_temp_folder() -> str:
     return str(Path(base) / 'ALAS_Logs_Archive' / 'Cache')
 
 
+def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
+                   package_type: str) -> SelfUpdater:
+    """构建 SelfUpdater 实例（避免四处重复拼参数）"""
+    download_func = partial(
+        download_with_progress,
+        proxy=config_mgr.github_proxy,
+        logger=logger,
+    )
+    return SelfUpdater(
+        github_repo="NEANC/ALAS_Logs_Archive",
+        asset_pattern=r"^ALAS_Logs_Archive-(Nuitka|PyInstaller)-v[\d.]+.*\.exe$",
+        app_name="ALAS_Logs_Archive",
+        current_version=VERSION,
+        proxy=config_mgr.github_proxy,
+        temp_folder=get_temp_folder(),
+        logger=logger,
+        download_func=download_func,
+        self_update_channel=config_mgr.self_update_channel,
+        is_bundled=is_bundled,
+        package_type=package_type,
+    )
+
+
+def _cleanup_update_residue(logger: logging.Logger) -> None:
+    """清理上次更新残留（状态文件 + 缓存）"""
+    _handle_update_state(logger)
+    SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+
+
+def _resolve_config_path() -> str:
+    """解析 config.ini 路径（打包 exe 可能指向临时目录，回落 CWD）"""
+    config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
+    if not os.path.exists(config_path) and os.path.exists(os.path.join(os.getcwd(), CONFIG_FILE)):
+        config_path = os.path.join(os.getcwd(), CONFIG_FILE)
+    return config_path
+
+
 def main():
     """主函数"""
     args = parse_command_line_args()
+
+    # ── 自更新验证模式（由 PS1 Helper 在替换后调用） ──
+    if args.self_update_verify:
+        exit_code = SelfUpdater.self_update_verify(
+            expected_sha256=args.expected_sha256,
+            expected_version=args.expected_version,
+        )
+        sys.exit(exit_code)
+
+    # ── 重试更新模式（PS1 回滚后 retry_count < max） ──
+    if args.retry_update:
+        # 此时还未初始化 logger/config，使用最小化 logger
+        logger = setup_logger("logs", 15, logging.INFO, save_logs=False)
+        logger.info("正在重试自更新...")
+        is_bundled, package_type = detect_package_type()
+        try:
+            config_path = _resolve_config_path()
+            config_mgr = ConfigManager(config_path)
+            config_mgr.load()
+            config_mgr.set_logger(logger)
+            updater = _build_updater(logger, config_mgr, is_bundled, package_type)
+            need_exit = updater.check_self_update()
+            if need_exit:
+                sys.exit(0)
+        except Exception as e:
+            logger.error(f"重试更新失败: {e}")
+        logger.error("重试更新失败，无法获取新版本")
+        sys.exit(1)
+
+    # ── 更新失败模式（PS1 回滚耗尽 retry_count） ──
+    if args.update_failed:
+        logger = setup_logger("logs", 15, logging.INFO, save_logs=False)
+        state = UpdateState.load()
+        if state:
+            failed_ver = state["new_version"]
+            logger.critical(f"自更新失败：版本 {failed_ver} 多次验证不通过")
+            print(f"\n软件自动更新失败，版本 {failed_ver} 已被标记为不可用。")
+            print("已回退到旧版本，后续将跳过该版本的自动更新。")
+        else:
+            logger.critical("自更新失败，但无法读取状态信息")
+        input("\n按任意键退出...")
+        sys.exit(1)
 
     print_info()
 
@@ -201,10 +286,7 @@ def main():
         archive_mode = args.mode if args.mode else "scroll"
         max_workers = args.workers if args.workers is not None else 1
     else:
-        config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
-        # 打包后的 exe 中 sys.argv[0] 可能指向临时目录，回落检查 CWD
-        if not os.path.exists(config_path) and os.path.exists(os.path.join(os.getcwd(), CONFIG_FILE)):
-            config_path = os.path.join(os.getcwd(), CONFIG_FILE)
+        config_path = _resolve_config_path()
         config_mgr = ConfigManager(config_path)
         config_mgr.load()
         log_folder = config_mgr.log_folder
@@ -226,33 +308,26 @@ def main():
         is_bundled, package_type = detect_package_type()
         logger.debug(f"版本号: {VERSION}")
 
-        # ── 自更新：中断恢复 ──
-        _handle_update_state(logger)
+        # ── 仅检查自身更新 / 强制更新模式 ──
+        if args.update or args.update_force:
+            if is_bundled:
+                try:
+                    updater = _build_updater(logger, config_mgr, is_bundled, package_type)
+                    if updater.check_self_update(force=args.update_force):
+                        logger.info("已将新版本下载到临时文件夹，即将退出以完成更新...")
+                        sys.exit(0)
+                except Exception as e:
+                    logger.error(f"自更新检查失败: {e}")
+            input("\n按任意键退出...")
+            sys.exit(0)
 
-        # ── 自更新：检查新版本 ──
-        temp_folder = get_temp_folder()
+        # ── 正常启动：清理上次更新残留 + 自动检查更新 ──
+        _cleanup_update_residue(logger)
+
         if is_bundled and config_mgr.self_update_enabled:
             try:
-                download_func = partial(
-                    download_with_progress,
-                    proxy=config_mgr.github_proxy,
-                    logger=logger,
-                )
-                updater = SelfUpdater(
-                    github_repo="NEANC/ALAS_Logs_Archive",
-                    asset_pattern=r"^ALAS_Logs_Archive-(Nuitka|PyInstaller)-v[\d.]+.*\.exe$",
-                    app_name="ALAS_Logs_Archive",
-                    current_version=VERSION,
-                    proxy=config_mgr.github_proxy,
-                    temp_folder=temp_folder,
-                    logger=logger,
-                    download_func=download_func,
-                    self_update_channel=config_mgr.self_update_channel,
-                    is_bundled=is_bundled,
-                    package_type=package_type,
-                )
-                force = args.update_force or bool(args.self_update)
-                need_exit = updater.check_self_update(force=force)
+                updater = _build_updater(logger, config_mgr, is_bundled, package_type)
+                need_exit = updater.check_self_update()
                 if need_exit:
                     return
             except Exception as e:
@@ -303,7 +378,6 @@ def main():
         create_archive(files_to_archive, archive_folder, archive_name_format, compression_algorithm, compression_level, archive_mode, max_workers, chunk_size, logger)
 
     except KeyboardInterrupt:
-        print("\r" + " " * 80 + "\r", end="", flush=True)
         logger.warning("捕获到Ctrl+C，终止运行")
         sys.exit(0)
     except Exception as e:
