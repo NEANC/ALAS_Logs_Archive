@@ -67,7 +67,7 @@ class ConfigManager:
         'SelfUpdate.channel': '自我更新版本通道\n'
                               '- preview: 包括预发布版本 (Alpha/Beta/RC)\n'
                               '- stable: 仅正式发布版本',
-        'SelfUpdate.github_proxy': '自更新使用的 HTTP(S) 代理（如 http://127.0.0.1:10809）',
+        'SelfUpdate.github_proxy': '自更新使用的代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理',
     }
 
     @classmethod
