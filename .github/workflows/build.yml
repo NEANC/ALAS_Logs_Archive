@@ -68,26 +68,49 @@ jobs:
             fi
             if [[ -n "$previous_base" ]]; then
               echo "Generating changelog from $previous_base to $current_tag"
-              # 获取完整的提交列表
-              git log --oneline "$previous_base..HEAD" | grep -v "Merge pull request" > full_commits.txt
-              total_commits=$(wc -l < full_commits.txt)
+              # 获取非合并提交列表
+              git log --oneline --no-merges "$previous_base..HEAD" > raw_commits.txt
+
+              # 收集被 revert 的原始提交 SHA，同时过滤 revert 提交本身
+              > filtered_commits.txt
+              while IFS= read -r line; do
+                sha=$(echo "$line" | cut -d' ' -f1)
+                # 检查是否为 revert 提交
+                if git log -1 --format="%s" "$sha" | grep -qi "^Revert "; then
+                  # 解析 revert 消息中的原始提交 SHA
+                  reverted=$(git log -1 --format="%B" "$sha" | grep -oP 'This reverts commit \K[a-f0-9]+' | head -1)
+                  if [[ -n "$reverted" ]]; then
+                    echo "$reverted" >> reverted_shas.txt
+                  fi
+                  # 跳过该 revert 提交
+                  continue
+                fi
+                # 检查是否为被 revert 的原始提交
+                if [[ -f reverted_shas.txt ]] && grep -q "^$sha$" reverted_shas.txt 2>/dev/null; then
+                  continue
+                fi
+                echo "$line" >> filtered_commits.txt
+              done < raw_commits.txt
+
+              total_commits=$(wc -l < filtered_commits.txt)
               # 正式版取前15个，pre-release 取前8个
               if [[ "${{ steps.set_pre.outputs.prerelease }}" == "false" ]]; then
-                head -15 full_commits.txt > CHANGELOG.md
+                head -15 filtered_commits.txt > CHANGELOG.md
                 # 正式版无论数量都放置 Full Changelog 链接
                 echo "" >> CHANGELOG.md
                 echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_base...$current_tag" >> CHANGELOG.md
               else
-                head -8 full_commits.txt > CHANGELOG.md
+                head -8 filtered_commits.txt > CHANGELOG.md
                 if [[ $total_commits -gt 8 ]]; then
                   echo "" >> CHANGELOG.md
                   echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$previous_base...$current_tag" >> CHANGELOG.md
                 fi
               fi
+              rm -f reverted_shas.txt raw_commits.txt filtered_commits.txt
             else
               echo "First release, no previous tag found"
-              # 首次发布，只取前8个提交
-              git log --oneline | grep -v "Merge pull request" | head -8 > CHANGELOG.md
+              # 首次发布，只取前8个非合并提交
+              git log --oneline --no-merges | head -8 > CHANGELOG.md
             fi
             # Add header
             echo "## What's Changed" > temp_changelog.md
@@ -309,5 +332,4 @@ jobs:
           body_path: release/CHANGELOG.md
           files: |
             release/*.exe
-            release/CHANGELOG.md
           prerelease: ${{ needs.meta.outputs.prerelease != 'false' }}
