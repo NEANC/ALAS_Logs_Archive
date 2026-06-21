@@ -331,17 +331,8 @@ def main():
             input("\n按任意键退出...")
             sys.exit(0)
 
-        # ── 正常启动：清理上次更新残留 + 自动检查更新 ──
+        # ── 正常启动：清理上次更新残留 ──
         _cleanup_update_residue(logger)
-
-        if is_bundled and config_mgr.self_update_enabled:
-            try:
-                updater = _build_updater(logger, config_mgr, is_bundled, package_type)
-                need_exit = updater.check_self_update()
-                if need_exit:
-                    return
-            except Exception as e:
-                logger.warning(f"自更新检查跳过: {e}")
 
         target_folder = args.target if args.target else config_mgr.target_folder
         archive_folder = args.archive if args.archive else config_mgr.archive_folder
@@ -393,6 +384,16 @@ def main():
     except Exception as e:
         logger.error(f"程序执行出错: {e}")
         raise
+
+    # ── 主流程完成后：自动检查更新 ──
+    if not cli_only and is_bundled and config_mgr.self_update_enabled:
+        try:
+            updater = _build_updater(logger, config_mgr, is_bundled, package_type)
+            need_exit = updater.check_self_update()
+            if need_exit:
+                return
+        except Exception as e:
+            logger.warning(f"自更新检查跳过: {e}")
 
 
 if __name__ == "__main__":
