@@ -98,6 +98,9 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("-d", "--decompress", help="解压归档文件（指定ZIP文件路径）")
     parser.add_argument("-o", "--output", help="解压输出目录（与 -d 配合使用，默认为ZIP同目录下同名文件夹）")
     parser.add_argument("-S", "--self-update", help="检查并执行自身更新", action="store_true")
+    parser.add_argument("--update-force", "--Update-force", "--Update-Force",
+                        action="store_true", dest="update_force", default=False,
+                        help="强制更新自身到最新版本")
     parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件拖放）")
     return parser.parse_args()
 
@@ -244,7 +247,7 @@ def main():
                     is_bundled=is_bundled,
                     package_type=package_type,
                 )
-                force = bool(args.self_update)
+                force = args.update_force or bool(args.self_update)
                 need_exit = updater.check_self_update(force=force)
                 if need_exit:
                     return
