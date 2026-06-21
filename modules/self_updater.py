@@ -111,6 +111,32 @@ class SelfUpdater:
             return 'stable'
         return 'preview'
 
+    def _check_system_requirements(self) -> bool:
+        """检查系统环境是否满足自更新条件：Windows + PowerShell 5.1+"""
+        if sys.platform != 'win32':
+            self.logger.critical("自我更新仅支持 Windows 操作系统")
+            return False
+
+        try:
+            result = subprocess.run(
+                ['powershell.exe', '-NoProfile', '-Command',
+                 '$PSVersionTable.PSVersion.Major'],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                self.logger.critical("无法获取 PowerShell 版本信息")
+                return False
+            major = int(result.stdout.strip())
+            if major < 5:
+                self.logger.critical(f"PowerShell 版本过低: {major}，需要 5.1 或更高版本")
+                return False
+            self.logger.debug(f"PowerShell 版本：{major} 环境检查通过")
+        except (subprocess.TimeoutExpired, ValueError, OSError) as e:
+            self.logger.critical(f"检测 PowerShell 版本失败: {e}")
+            return False
+
+        return True
+
     def _make_headers(self) -> Dict[str, str]:
         """构建请求头"""
         return {'User-Agent': self.app_name}
@@ -260,6 +286,9 @@ class SelfUpdater:
             self._is_bundled, self._package_type = detect_package_type()
         if not self._is_bundled:
             self.logger.warning("当前为调试模式，跳过更新检查")
+            return False
+
+        if not self._check_system_requirements():
             return False
 
         try:
