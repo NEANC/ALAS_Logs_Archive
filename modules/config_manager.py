@@ -35,6 +35,11 @@ class ConfigManager:
             'max_log_files': '15',
             'log_level': 'INFO',
         },
+        'SelfUpdate': {
+            'enabled': 'true',
+            'channel': 'stable',
+            'github_proxy': '',
+        },
     }
 
     _COMMENTS = {
@@ -58,6 +63,11 @@ class ConfigManager:
         'log.log_folder': '日志保存文件夹',
         'log.max_log_files': '最大日志文件数：保留的程序日志文件的最大数量',
         'log.log_level': '日志等级：控制台输出的日志记录等级（日志文件始终记录完整输出）',
+        'SelfUpdate.enabled': '自我更新开关：设为 false 可禁用自动检查更新',
+        'SelfUpdate.channel': '自我更新版本通道\n'
+                              '- preview: 包括预发布版本 (Alpha/Beta/RC)\n'
+                              '- stable: 仅正式发布版本',
+        'SelfUpdate.github_proxy': '自更新使用的代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理',
     }
 
     @classmethod
@@ -101,6 +111,9 @@ class ConfigManager:
         self.log_folder = 'logs'
         self.max_log_files = 15
         self.log_level = logging.INFO
+        self.self_update_enabled = True
+        self.self_update_channel = 'stable'
+        self.github_proxy = ''
 
     def _log(self, level: str, msg: str) -> None:
         """统一日志输出：有 logger 时用 logger，否则用 print
@@ -349,6 +362,11 @@ class ConfigManager:
             'CRITICAL': logging.CRITICAL,
         }
         self.log_level = log_level_map.get(log_level_str, logging.INFO)
+
+        # [SelfUpdate]
+        self.self_update_enabled = self._get_bool('SelfUpdate', 'enabled', True)
+        self.self_update_channel = self._get_str('SelfUpdate', 'channel', 'stable')
+        self.github_proxy = self._get_str('SelfUpdate', 'github_proxy', '')
 
         return self
 

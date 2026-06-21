@@ -8,14 +8,19 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple
+from functools import partial
+from typing import List
 
 from modules.alas_logger_processor import delete_error_folder, delete_gui_files
 from modules.config_manager import CONFIG_FILE, ConfigManager
+from modules.download_manager import download_with_progress
 from modules.logger_manager import setup_logger
 from modules.version import VERSION, print_info
 from modules.zip_compress import create_archive
 from modules.zip_decompress import decompress_archive
+from modules.self_updater import SelfUpdater
+from modules.config_self_updater import UpdateState
+from modules.self_utils import detect_package_type
 
 # 1MB，文件读写块大小
 CHUNK_SIZE = 1048576
@@ -73,38 +78,6 @@ def get_files_to_archive(target_folder: str, current_date: str, logger: logging.
     return files_to_archive
 
 
-def detect_package_type() -> Tuple[bool, str]:
-    """检测当前运行环境是否为打包后的可执行文件
-
-    Returns:
-        (是否为打包后程序, 打包方式名称)
-    """
-    # 使用 sys.argv[0] 统一判断源码模式：.py 脚本即为源码运行
-    # 在 PyInstaller/Nuitka 打包后，sys.argv[0] 指向 .exe，不会以 .py 结尾
-    is_py_script = Path(sys.argv[0]).suffix.lower() == '.py'
-    # 兜底：检查打包标识
-    is_pyinstaller = getattr(sys, 'frozen', False) or hasattr(sys, '_MEIPASS')
-    is_nuitka = hasattr(sys, '__compiled__')
-
-    is_bundled = (not is_py_script) or is_pyinstaller or is_nuitka
-
-    logger = logging.getLogger(__name__)
-
-    if is_pyinstaller:
-        local_package_type = "PyInstaller"
-    elif is_nuitka:
-        local_package_type = "Nuitka"
-    else:
-        local_package_type = "Nuitka"
-
-    if is_bundled:
-        logger.debug(f"运行环境: {local_package_type}")
-    else:
-        logger.debug(f"运行环境: 源码模式")
-
-    return is_bundled, local_package_type
-
-
 def parse_command_line_args() -> argparse.Namespace:
     """解析命令行参数
 
@@ -124,6 +97,17 @@ def parse_command_line_args() -> argparse.Namespace:
                         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     parser.add_argument("-d", "--decompress", help="解压归档文件（指定ZIP文件路径）")
     parser.add_argument("-o", "--output", help="解压输出目录（与 -d 配合使用，默认为ZIP同目录下同名文件夹）")
+    parser.add_argument("--update", "--Update", action="store_true",
+                        dest="update", default=False,
+                        help="仅检查自身更新")
+    parser.add_argument("--update-force", "--Update-force", "--Update-Force",
+                        action="store_true", dest="update_force", default=False,
+                        help="强制更新自身到最新版本")
+    parser.add_argument("--self-update-verify", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-sha256", type=str, default="", help=argparse.SUPPRESS)
+    parser.add_argument("--expected-version", type=str, default="", help=argparse.SUPPRESS)
+    parser.add_argument("--retry-update", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--update-failed", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件拖放）")
     return parser.parse_args()
 
@@ -145,7 +129,6 @@ def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = Fal
     try:
         decompress_archive(archive_path, output_dir, logger)
     except KeyboardInterrupt:
-        print("\r" + " " * 80 + "\r", end="", flush=True)
         logger.warning("捕获到Ctrl+C，终止运行")
         sys.exit(0)
     except Exception as e:
@@ -153,9 +136,131 @@ def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = Fal
         raise
 
 
+def _handle_update_state(logger: logging.Logger) -> None:
+    """检查并处理中断的更新状态（回滚、验证、清除失效记录）"""
+    state = UpdateState.load()
+    if not state:
+        return
+
+    current_state = state.get("State", "state", fallback="idle")
+    if current_state == "verified":
+        logger.info("上次更新已成功完成")
+        SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+        SelfUpdater.clean_update_scripts(
+            os.path.dirname(sys.argv[0]), "ALAS_Logs_Archive", logger,
+            new_file=state["new_file"],
+            backup_file=state["backup_file"],
+        )
+        state.delete()
+    elif current_state == "rollback_done":
+        logger.warning("上次更新已回滚")
+        SelfUpdater.clean_update_scripts(
+            os.path.dirname(sys.argv[0]), "ALAS_Logs_Archive", logger,
+            new_file=state["new_file"],
+            backup_file=state["backup_file"],
+        )
+        state.delete()
+    elif current_state == "failed_disabled":
+        failed_ver = state["new_version"]
+        logger.warning(f"版本 {failed_ver} 此前更新失败，已禁用自动更新。")
+    elif current_state in ("downloaded_verified", "helper_started", "replacing",
+                            "pending_new_verify", "rollback"):
+        logger.warning(f"检测到未完成的更新（状态: {current_state}），尝试回滚...")
+        SelfUpdater.rollback(logger)
+        SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+
+
+def get_temp_folder() -> str:
+    """获取系统缓存文件夹路径（用于自更新下载缓存）"""
+    if sys.platform == 'win32':
+        base = os.environ.get('LOCALAPPDATA', os.environ.get('TEMP', str(Path.home())))
+    else:
+        base = os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))
+    return str(Path(base) / 'ALAS_Logs_Archive' / 'Cache')
+
+
+def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
+                   package_type: str) -> SelfUpdater:
+    """构建 SelfUpdater 实例（避免四处重复拼参数）"""
+    download_func = partial(
+        download_with_progress,
+        proxy=config_mgr.github_proxy,
+        logger=logger,
+    )
+    return SelfUpdater(
+        github_repo="NEANC/ALAS_Logs_Archive",
+        asset_pattern=r"^ALAS_Logs_Archive-(Nuitka|PyInstaller)-v[\d.]+.*\.exe$",
+        app_name="ALAS_Logs_Archive",
+        current_version=VERSION,
+        proxy=config_mgr.github_proxy,
+        temp_folder=get_temp_folder(),
+        logger=logger,
+        download_func=download_func,
+        self_update_channel=config_mgr.self_update_channel,
+        is_bundled=is_bundled,
+        package_type=package_type,
+    )
+
+
+def _cleanup_update_residue(logger: logging.Logger) -> None:
+    """清理上次更新残留（状态文件 + 缓存）"""
+    _handle_update_state(logger)
+    SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+
+
+def _resolve_config_path() -> str:
+    """解析 config.ini 路径（打包 exe 可能指向临时目录，回落 CWD）"""
+    config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
+    if not os.path.exists(config_path) and os.path.exists(os.path.join(os.getcwd(), CONFIG_FILE)):
+        config_path = os.path.join(os.getcwd(), CONFIG_FILE)
+    return config_path
+
+
 def main():
     """主函数"""
     args = parse_command_line_args()
+
+    # ── 自更新验证模式（由 PS1 Helper 在替换后调用） ──
+    if args.self_update_verify:
+        exit_code = SelfUpdater.self_update_verify(
+            expected_sha256=args.expected_sha256,
+            expected_version=args.expected_version,
+        )
+        sys.exit(exit_code)
+
+    # ── 重试更新模式（PS1 回滚后 retry_count < max） ──
+    if args.retry_update:
+        # 此时还未初始化 logger/config，使用最小化 logger
+        logger = setup_logger("logs", 15, logging.INFO, save_logs=False)
+        logger.info("正在重试自更新...")
+        is_bundled, package_type = detect_package_type()
+        try:
+            config_path = _resolve_config_path()
+            config_mgr = ConfigManager(config_path)
+            config_mgr.load()
+            config_mgr.set_logger(logger)
+            updater = _build_updater(logger, config_mgr, is_bundled, package_type)
+            need_exit = updater.check_self_update()
+            if need_exit:
+                sys.exit(0)
+        except Exception as e:
+            logger.error(f"重试更新失败: {e}")
+        logger.error("重试更新失败，无法获取新版本")
+        sys.exit(1)
+
+    # ── 更新失败模式（PS1 回滚耗尽 retry_count） ──
+    if args.update_failed:
+        logger = setup_logger("logs", 15, logging.INFO, save_logs=False)
+        state = UpdateState.load()
+        if state:
+            failed_ver = state["new_version"]
+            logger.critical(f"自更新失败：版本 {failed_ver} 多次验证不通过")
+            print(f"\n软件自动更新失败，版本 {failed_ver} 已被标记为不可用。")
+            print("已回退到旧版本，后续将跳过该版本的自动更新。")
+        else:
+            logger.critical("自更新失败，但无法读取状态信息")
+        input("\n按任意键退出...")
+        sys.exit(1)
 
     print_info()
 
@@ -191,10 +296,7 @@ def main():
         archive_mode = args.mode if args.mode else "scroll"
         max_workers = args.workers if args.workers is not None else 1
     else:
-        config_path = str(Path(sys.argv[0]).resolve().parent / CONFIG_FILE)
-        # 打包后的 exe 中 sys.argv[0] 可能指向临时目录，回落检查 CWD
-        if not os.path.exists(config_path) and os.path.exists(os.path.join(os.getcwd(), CONFIG_FILE)):
-            config_path = os.path.join(os.getcwd(), CONFIG_FILE)
+        config_path = _resolve_config_path()
         config_mgr = ConfigManager(config_path)
         config_mgr.load()
         log_folder = config_mgr.log_folder
@@ -213,8 +315,24 @@ def main():
         config_mgr.set_logger(logger)
 
         # 检测运行环境
-        detect_package_type()
+        is_bundled, package_type = detect_package_type()
         logger.debug(f"版本号: {VERSION}")
+
+        # ── 仅检查自身更新 / 强制更新模式 ──
+        if args.update or args.update_force:
+            if is_bundled:
+                try:
+                    updater = _build_updater(logger, config_mgr, is_bundled, package_type)
+                    if updater.check_self_update(force=args.update_force):
+                        logger.info("已将新版本下载到临时文件夹，即将退出以完成更新...")
+                        sys.exit(0)
+                except Exception as e:
+                    logger.error(f"自更新检查失败: {e}")
+            input("\n按任意键退出...")
+            sys.exit(0)
+
+        # ── 正常启动：清理上次更新残留 ──
+        _cleanup_update_residue(logger)
 
         target_folder = args.target if args.target else config_mgr.target_folder
         archive_folder = args.archive if args.archive else config_mgr.archive_folder
@@ -261,12 +379,21 @@ def main():
         create_archive(files_to_archive, archive_folder, archive_name_format, compression_algorithm, compression_level, archive_mode, max_workers, chunk_size, logger)
 
     except KeyboardInterrupt:
-        print("\r" + " " * 80 + "\r", end="", flush=True)
         logger.warning("捕获到Ctrl+C，终止运行")
         sys.exit(0)
     except Exception as e:
         logger.error(f"程序执行出错: {e}")
         raise
+
+    # ── 主流程完成后：自动检查更新 ──
+    if not cli_only and is_bundled and config_mgr.self_update_enabled:
+        try:
+            updater = _build_updater(logger, config_mgr, is_bundled, package_type)
+            need_exit = updater.check_self_update()
+            if need_exit:
+                return
+        except Exception as e:
+            logger.warning(f"自更新检查跳过: {e}")
 
 
 if __name__ == "__main__":
