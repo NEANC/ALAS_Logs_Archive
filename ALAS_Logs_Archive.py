@@ -146,9 +146,19 @@ def _handle_update_state(logger: logging.Logger) -> None:
     if current_state == "verified":
         logger.info("上次更新已成功完成")
         SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+        SelfUpdater.clean_update_scripts(
+            os.path.dirname(sys.argv[0]), "ALAS_Logs_Archive", logger,
+            new_file=state["new_file"],
+            backup_file=state["backup_file"],
+        )
         state.delete()
     elif current_state == "rollback_done":
         logger.warning("上次更新已回滚")
+        SelfUpdater.clean_update_scripts(
+            os.path.dirname(sys.argv[0]), "ALAS_Logs_Archive", logger,
+            new_file=state["new_file"],
+            backup_file=state["backup_file"],
+        )
         state.delete()
     elif current_state == "failed_disabled":
         failed_ver = state["new_version"]

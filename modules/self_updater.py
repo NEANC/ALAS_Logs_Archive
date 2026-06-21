@@ -1092,6 +1092,40 @@ class SelfUpdater:
                 logger.warning(f"清理自更新缓存目录失败: {e}")
 
     @staticmethod
+    def clean_update_scripts(exe_dir: str, app_name: str,
+                             logger: logging.Logger,
+                             new_file: str = "",
+                             backup_file: str = "") -> None:
+        """清理更新产生的 PS1 脚本、二进制残留、锁文件和更新日志
+
+        Args:
+            exe_dir: exe 所在目录
+            app_name: 应用名称
+            logger: 日志记录器
+            new_file: .new.exe 暂存路径（从状态文件读取）
+            backup_file: .backup.exe 路径（从状态文件读取）
+        """
+        base = Path(exe_dir)
+        files = [
+            base / f"{app_name}_Update_Helper.ps1",
+            base / f"{app_name}_Update.ps1",
+            base / f"{app_name}.new.exe",
+            base / "update_started.lock",
+            base / "update.log",
+        ]
+        if backup_file:
+            files.append(Path(backup_file))
+        if new_file:
+            files.append(Path(new_file))
+        for fp in files:
+            try:
+                if fp.exists():
+                    fp.unlink()
+                    logger.debug(f"已清理: {fp}")
+            except OSError:
+                pass
+
+    @staticmethod
     def rollback(logger: Optional[logging.Logger] = None) -> bool:
         """
         从 INI 状态文件读取 backup_file 路径，恢复旧版
