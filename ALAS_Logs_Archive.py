@@ -155,8 +155,12 @@ def _handle_update_state(logger: logging.Logger) -> None:
 
 
 def get_temp_folder() -> str:
-    """获取临时文件夹路径（与 exe 同目录）"""
-    return str(Path(sys.argv[0]).resolve().parent / ".temp")
+    """获取系统缓存文件夹路径（用于自更新下载缓存）"""
+    if sys.platform == 'win32':
+        base = os.environ.get('LOCALAPPDATA', os.environ.get('TEMP', str(Path.home())))
+    else:
+        base = os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))
+    return str(Path(base) / 'ALAS_Logs_Archive' / 'Cache')
 
 
 def main():
