@@ -2,10 +2,8 @@
 # -_- coding: utf-8 -_-
 
 import sys
-from colorama import Style, Fore, init as colorama_init
+from colorama import Style, Fore
 from tqdm import tqdm
-
-colorama_init(autoreset=True)
 
 # ── 进度条颜色常量 ──
 BAR_FG = Style.BRIGHT + Fore.WHITE              # 进度条主体：白色加粗

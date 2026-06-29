@@ -11,6 +11,8 @@ from pathlib import Path
 from functools import partial
 from typing import List
 
+import colorama
+
 from modules.alas_logger_processor import delete_error_folder, delete_gui_files
 from modules.config_manager import CONFIG_FILE, ConfigManager
 from modules.download_manager import download_with_progress
@@ -397,4 +399,5 @@ def main():
 
 if __name__ == "__main__":
     setup_utf8_console()
+    colorama.init(autoreset=True)
     main()

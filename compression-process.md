@@ -26,9 +26,9 @@ for fp in files:
 源文件 → 分块读入内存 → 一次性压缩 → 整块写入 ZIP
 
 ```
-文件A.log ─→ read_file_chunked() ─→ bytes ─→ compress() ─→ (name, data, size) ─┐
-文件B.log ─→ read_file_chunked() ─→ bytes ─→ compress() ─→ (name, data, size) ─┤  ThreadPoolExecutor
-文件C.log ─→ read_file_chunked() ─→ bytes ─→ compress() ─→ (name, data, size) ─┘  并发压缩
+文件A.log ─→ read_file_fully() ─→ bytes ─→ compress() ─→ (name, data, size) ─┐
+文件B.log ─→ read_file_fully() ─→ bytes ─→ compress() ─→ (name, data, size) ─┤  ThreadPoolExecutor
+文件C.log ─→ read_file_fully() ─→ bytes ─→ compress() ─→ (name, data, size) ─┘  并发压缩
                                                                                     │
                                                                   主线程 as_completed 循环:
                                                                      writestr() 写入 ZIP

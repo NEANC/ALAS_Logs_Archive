@@ -9,7 +9,7 @@ import tempfile
 
 import pytest
 
-from modules.zip_compress import format_size, compress_file, create_archive, read_file_chunked
+from modules.zip_compress import format_size, compress_file, create_archive, read_file_fully
 
 
 class TestFormatSize:
@@ -32,7 +32,7 @@ class TestFormatSize:
 
 
 class TestReadFileChunked:
-    """read_file_chunked 函数测试"""
+    """read_file_fully 函数测试"""
 
     def test_small_file(self):
         """读取小于块大小的文件"""
@@ -41,7 +41,7 @@ class TestReadFileChunked:
             tmp_path = f.name
 
         try:
-            result = read_file_chunked(tmp_path, 8192)
+            result = read_file_fully(tmp_path, 8192)
             assert result == b"Hello World!"
         finally:
             os.unlink(tmp_path)
@@ -54,7 +54,7 @@ class TestReadFileChunked:
             tmp_path = f.name
 
         try:
-            result = read_file_chunked(tmp_path, 1024)
+            result = read_file_fully(tmp_path, 1024)
             assert result == data
             assert len(result) == 5000
         finally:
