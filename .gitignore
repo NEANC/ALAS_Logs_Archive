@@ -192,3 +192,7 @@ ds*.md
 # 日志文件夹
 logs/
 log/
+
+/.trae/
+/*.yaml
+/*.yml

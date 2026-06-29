@@ -512,7 +512,7 @@ def create_archive(files: List[str], archive_folder: str, archive_name_format: s
             archive_filename = f"{name_without_ext}_{counter}.{ext}"
             archive_path = os.path.join(archive_folder, archive_filename)
 
-        if counter > 1:
+        if counter > 0:
             logger.info(f"检测到已有归档文件，将创建: {archive_filename}")
         else:
             logger.info(f"创建新归档文件: {archive_filename}")

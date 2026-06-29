@@ -285,7 +285,6 @@ def main():
         log_level = getattr(logging, args.console_level) if args.console_level else logging.INFO
 
         logger = setup_logger(log_folder, max_log_files, log_level, save_logs)
-        detect_package_type()
         logger.debug(f"版本号: {VERSION}")
 
         target_folder = args.target
