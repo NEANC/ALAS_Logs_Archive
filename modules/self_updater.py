@@ -280,7 +280,7 @@ class SelfUpdater:
         Returns:
             bool: 是否需要退出以完成更新
         """
-        self.logger.info("开始检查软件版本...")
+        self.logger.info("正在检查软件更新...")
 
         if self._is_bundled is None:
             self._is_bundled, self._package_type = detect_package_type()
