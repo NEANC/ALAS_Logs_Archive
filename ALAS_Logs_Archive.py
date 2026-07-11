@@ -110,7 +110,7 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("--expected-version", type=str, default="", help=argparse.SUPPRESS)
     parser.add_argument("--retry-update", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--update-failed", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件拖放）")
+    parser.add_argument("zipfile", nargs="?", default=None, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
