@@ -574,7 +574,7 @@ class SelfUpdater:
                     $lastError = $_.Exception.Message
                 }
 
-                throw "Get-SHA256 failed: $lastError"
+                throw "Get-SHA256 failed for '$filePath': $lastError"
             }
 
             function Read-IniValue($section, $key) {
@@ -958,7 +958,7 @@ class SelfUpdater:
                     $lastError = $_.Exception.Message
                 }
 
-                throw "Get-SHA256 failed: $lastError"
+                throw "Get-SHA256 failed for '$filePath': $lastError"
             }
 
             function Read-IniValue($section, $key) {
