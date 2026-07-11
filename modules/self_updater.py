@@ -478,6 +478,54 @@ class SelfUpdater:
 
     # ── PS1 脚本生成（从 modules/self_updater.py 完整复用） ──
 
+    @staticmethod
+    def _get_sha256_ps1() -> str:
+        """生成 Get-SHA256 PowerShell 函数定义（.NET → Get-FileHash → certutil 三层回退）"""
+        return textwrap.dedent(r"""
+            function Get-SHA256($filePath) {
+                $lastError = $null
+
+                $stream = $null
+                $sha256 = $null
+                try {
+                    $stream = [System.IO.File]::OpenRead($filePath)
+                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                    $hash = $sha256.ComputeHash($stream)
+                    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+                } catch {
+                    $lastError = $_.Exception.Message
+                } finally {
+                    if ($sha256) { $sha256.Dispose() }
+                    if ($stream) { $stream.Dispose() }
+                }
+
+                try {
+                    return (Get-FileHash -Algorithm SHA256 -LiteralPath $filePath -ErrorAction Stop).Hash.ToLowerInvariant()
+                } catch {
+                    $lastError = $_.Exception.Message
+                }
+
+                try {
+                    $global:LASTEXITCODE = 0
+                    $certOutput = & certutil.exe -hashfile $filePath SHA256 2>&1
+                    if ($LASTEXITCODE -ne 0) {
+                        throw ($certOutput -join "`n")
+                    }
+                    foreach ($line in $certOutput) {
+                        $hex = $line -replace '\s', ''
+                        if ($hex -match '^[0-9A-Fa-f]{64}$') {
+                            return $hex.ToLowerInvariant()
+                        }
+                    }
+                    throw "certutil output did not contain a SHA256 hash"
+                } catch {
+                    $lastError = $_.Exception.Message
+                }
+
+                throw "Get-SHA256 failed for '$filePath': $lastError"
+            }
+        """).rstrip("\n")
+
     def _generate_helper_ps1(self, script_dir: Path) -> None:
         """
         生成 {app}_Update_Helper.ps1
@@ -532,50 +580,7 @@ class SelfUpdater:
                 } catch {}
             }
 
-            function Get-SHA256($filePath) {
-                $lastError = $null
-
-                $stream = $null
-                $sha256 = $null
-                try {
-                    $stream = [System.IO.File]::OpenRead($filePath)
-                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-                    $hash = $sha256.ComputeHash($stream)
-                    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
-                } catch {
-                    $lastError = $_.Exception.Message
-                } finally {
-                    if ($sha256) { $sha256.Dispose() }
-                    if ($stream) { $stream.Dispose() }
-                }
-
-                try {
-                    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
-                        return (Get-FileHash -Algorithm SHA256 -LiteralPath $filePath -ErrorAction Stop).Hash.ToLowerInvariant()
-                    }
-                } catch {
-                    $lastError = $_.Exception.Message
-                }
-
-                try {
-                    $global:LASTEXITCODE = 0
-                    $certOutput = & certutil.exe -hashfile $filePath SHA256 2>&1
-                    if ($LASTEXITCODE -ne 0) {
-                        throw ($certOutput -join "`n")
-                    }
-                    foreach ($line in $certOutput) {
-                        $hex = $line -replace '\s', ''
-                        if ($hex -match '^[0-9A-Fa-f]{64}$') {
-                            return $hex.ToLowerInvariant()
-                        }
-                    }
-                    throw "certutil output did not contain a SHA256 hash"
-                } catch {
-                    $lastError = $_.Exception.Message
-                }
-
-                throw "Get-SHA256 failed for '$filePath': $lastError"
-            }
+{SHA256_FUNC_DEF}
 
             function Read-IniValue($section, $key) {
                 try {
@@ -874,7 +879,7 @@ class SelfUpdater:
                 Write-Log "ERROR" "helper error: $($_.Exception.Message)"
                 Restore-Backup $_.Exception.Message
             }
-        """).lstrip("\n")
+        """).replace("{SHA256_FUNC_DEF}", self._get_sha256_ps1()).lstrip("\n")
 
         script_path = script_dir / f"{self.app_name}_Update_Helper.ps1"
         script_path.write_text(ps1_content, encoding='utf-8-sig')
@@ -916,50 +921,7 @@ class SelfUpdater:
                 } catch {}
             }
 
-            function Get-SHA256($filePath) {
-                $lastError = $null
-
-                $stream = $null
-                $sha256 = $null
-                try {
-                    $stream = [System.IO.File]::OpenRead($filePath)
-                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-                    $hash = $sha256.ComputeHash($stream)
-                    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
-                } catch {
-                    $lastError = $_.Exception.Message
-                } finally {
-                    if ($sha256) { $sha256.Dispose() }
-                    if ($stream) { $stream.Dispose() }
-                }
-
-                try {
-                    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
-                        return (Get-FileHash -Algorithm SHA256 -LiteralPath $filePath -ErrorAction Stop).Hash.ToLowerInvariant()
-                    }
-                } catch {
-                    $lastError = $_.Exception.Message
-                }
-
-                try {
-                    $global:LASTEXITCODE = 0
-                    $certOutput = & certutil.exe -hashfile $filePath SHA256 2>&1
-                    if ($LASTEXITCODE -ne 0) {
-                        throw ($certOutput -join "`n")
-                    }
-                    foreach ($line in $certOutput) {
-                        $hex = $line -replace '\s', ''
-                        if ($hex -match '^[0-9A-Fa-f]{64}$') {
-                            return $hex.ToLowerInvariant()
-                        }
-                    }
-                    throw "certutil output did not contain a SHA256 hash"
-                } catch {
-                    $lastError = $_.Exception.Message
-                }
-
-                throw "Get-SHA256 failed for '$filePath': $lastError"
-            }
+{SHA256_FUNC_DEF}
 
             function Read-IniValue($section, $key) {
                 try {
@@ -1101,7 +1063,7 @@ class SelfUpdater:
                 Write-Error $_.Exception.Message
                 exit 1
             }
-        """).lstrip("\n")
+        """).replace("{SHA256_FUNC_DEF}", self._get_sha256_ps1()).lstrip("\n")
 
         script_path = script_dir / f"{self.app_name}_Update.ps1"
         script_path.write_text(ps1_content, encoding='utf-8-sig')
