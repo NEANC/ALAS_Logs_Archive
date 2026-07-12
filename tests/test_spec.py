@@ -188,3 +188,105 @@ def test_self_updater_build_runtime_paths_falls_back_to_program_dir(monkeypatch,
 
     assert paths['temp_folder'] == exe.parent / 'SelfUpdate'
     assert paths['runtime_dir'] == exe.parent / 'SelfUpdate' / 'v2.0.0'
+
+
+# ── 任务 5 测试 ──
+
+def test_generated_update_scripts_use_injected_absolute_paths(tmp_path):
+    """生成的 PS1 应使用注入路径，不再从 scriptDir 推导 state/log"""
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime' / 'v2.0.0'
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        temp_folder='',
+        logger=logging.getLogger('test_injected_paths'),
+    )
+    paths = {
+        'state_file': program_dir / 'update_state.ini',
+        'log_file': program_dir / 'update.log',
+        'runtime_dir': runtime_dir,
+        'helper_ps1': runtime_dir / 'TwoPush_Update_Helper.ps1',
+        'update_ps1': runtime_dir / 'TwoPush_Update.ps1',
+        'lock_file': runtime_dir / 'update_started.lock',
+    }
+
+    updater._generate_helper_ps1(paths)
+    updater._generate_update_ps1(paths)
+
+    helper_text = paths['helper_ps1'].read_text(encoding='utf-8-sig')
+    update_text = paths['update_ps1'].read_text(encoding='utf-8-sig')
+
+    # Should use injected paths
+    assert '$stateFile = "' + str(paths['state_file']) + '"' in helper_text
+    assert '$logFile   = "' + str(paths['log_file']) + '"' in helper_text
+    assert '$lockFile   = "' + str(paths['lock_file']) + '"' in helper_text
+    assert '$updatePs1 = "' + str(paths['update_ps1']) + '"' in helper_text
+    assert '$stateFile  = "' + str(paths['state_file']) + '"' in update_text
+    assert '$logFile    = "' + str(paths['log_file']) + '"' in update_text
+    # Should NOT use Join-Path $scriptDir
+    assert '$stateFile = Join-Path $scriptDir "update_state.ini"' not in helper_text
+    assert '$stateFile = Join-Path $scriptDir "update_state.ini"' not in update_text
+
+
+def test_replace_executable_writes_runtime_paths_to_state(monkeypatch, tmp_path):
+    """替换准备阶段应将 runtime 路径写入 update_state.ini"""
+    from modules.config_self_updater import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    exe = tmp_path / 'program' / 'TwoPush.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'old')
+    tmp_new = tmp_path / 'downloaded.exe'
+    tmp_new.write_bytes(b'new')
+    sha = tmp_path / 'downloaded.sha256'
+    sha.write_text('hash', encoding='utf-8')
+    custom_temp = tmp_path / 'runtime-root'
+
+    monkeypatch.setattr('modules.self_updater.get_exe_path', lambda: exe)
+    monkeypatch.setattr('modules.self_updater.os.getpid', lambda: 1234)
+
+    class FakeProc:
+        returncode = None
+        def poll(self):
+            return None
+        def kill(self):
+            return None
+
+    def fake_popen(*args, **kwargs):
+        lock_file = custom_temp / 'v2.0.0' / 'update_started.lock'
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        lock_file.write_text('started', encoding='utf-8')
+        return FakeProc()
+
+    monkeypatch.setattr('modules.self_updater.subprocess.Popen', fake_popen)
+    monkeypatch.setattr(sys, 'argv', [str(exe)])
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        temp_folder=str(custom_temp),
+        logger=logging.getLogger('test_replace_runtime_state'),
+    )
+
+    updater._replace_executable(tmp_new, sha, 'v2.0.0', 'oldhash', 'newhash')
+
+    state = UpdateState.load()
+    assert state is not None
+    assert state['runtime_dir'] == str(custom_temp / 'v2.0.0')
+    assert state['helper_ps1'] == str(custom_temp / 'v2.0.0' / 'TwoPush_Update_Helper.ps1')
+    assert state['update_ps1'] == str(custom_temp / 'v2.0.0' / 'TwoPush_Update.ps1')
+    assert state['lock_file'] == str(custom_temp / 'v2.0.0' / 'update_started.lock')
+    assert state['new_file'] == str(custom_temp / 'v2.0.0' / 'TwoPush.new.exe')
+    assert state['backup_file'] == str(custom_temp / 'v2.0.0' / 'TwoPush.backup.exe')
