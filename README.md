@@ -139,9 +139,9 @@
 PowerShell 脚本、启动锁、新版暂存文件和旧版备份文件会写入版本化运行时目录：
 
 ```text
-%LOCALAPPDATA%\TwoPush\SelfUpdate\{version}\
-├── TwoPush_Update_Helper.ps1
-├── TwoPush_Update.ps1
+%LOCALAPPDATA%\ALAS_Logs_Archive\SelfUpdate\{version}\
+├── ALAS_Logs_Archive_Update_Helper.ps1
+├── ALAS_Logs_Archive_Update.ps1
 ├── update_started.lock
 ├── {exe_stem}.new.exe
 └── {exe_stem}.backup.exe

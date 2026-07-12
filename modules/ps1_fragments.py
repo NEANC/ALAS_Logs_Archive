@@ -147,7 +147,7 @@ def generate_common_state_functions_ps1() -> str:
         function Set-UpdateStatus($state, $step, $message, $progress, $level) {
             $message = Normalize-IniValue $message
             if ($state) { Write-IniValue "State" "state" $state }
-            if ($step) { Write-IniValue "State" "step" $step }
+            if ($step) { Write-IniValue "State" "current_step" $step }
             if ($null -ne $progress) { Write-IniValue "State" "progress" "$progress" }
             if ($level) { Write-IniValue "State" "level" $level }
             Write-IniValue "State" "message" $message

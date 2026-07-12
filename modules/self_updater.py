@@ -708,7 +708,7 @@ class SelfUpdater:
     @staticmethod
     def _ps_quote(path: Path) -> str:
         """将路径转换为 PowerShell 双引号字符串内容。"""
-        return str(path).replace('`', '``').replace('"', '`"')
+        return str(path).replace('`', '``').replace('$', '`$').replace('"', '`"')
 
     @staticmethod
     def self_update_verify(expected_sha256: str = "",
@@ -786,15 +786,11 @@ class SelfUpdater:
                              logger: logging.Logger,
                              new_file: str = "",
                              backup_file: str = "") -> None:
-        """清理更新产生的 PS1 脚本、二进制残留、锁文件和更新日志
-
-        Args:
-            exe_dir: exe 所在目录
-            app_name: 应用名称
-            logger: 日志记录器
-            new_file: .new.exe 暂存路径（从状态文件读取）
-            backup_file: .backup.exe 路径（从状态文件读取）
-        """
+        """[已废弃] 清理更新产生的文件 — 请改用 _cleanup_update_residue()"""
+        import warnings
+        warnings.warn(
+            "clean_update_scripts 已废弃，请改用 SelfUpdater._cleanup_update_residue()",
+            DeprecationWarning, stacklevel=2)
         base = Path(exe_dir)
         files = [
             base / f"{app_name}_Update_Helper.ps1",

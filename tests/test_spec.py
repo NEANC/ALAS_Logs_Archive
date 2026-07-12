@@ -411,7 +411,7 @@ def test_readme_documents_self_update_runtime_layout():
     assert '自更新运行时文件布局' in content
     assert 'update_state.ini' in content
     assert 'update.log' in content
-    assert r'%LOCALAPPDATA%\TwoPush\SelfUpdate\{version}' in content
+    assert r'%LOCALAPPDATA%\ALAS_Logs_Archive\SelfUpdate\{version}' in content
     assert r'program_dir\SelfUpdate\{version}' in content
     for key in ['runtime_dir', 'helper_ps1', 'update_ps1', 'lock_file', 'new_file', 'backup_file']:
         assert key in content
