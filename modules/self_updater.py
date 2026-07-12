@@ -816,6 +816,66 @@ class SelfUpdater:
                 pass
 
     @staticmethod
+    def _cleanup_update_residue(logger: logging.Logger) -> None:
+        """按状态文件记录的路径清理更新运行时文件残留。
+
+        仅当状态为 verified 或 rollback_done 等终端状态时才执行清理：
+        1. 从状态文件读取运行时路径（helper_ps1 / update_ps1 / lock_file
+           / new_file / backup_file）并逐个删除
+        2. 尝试 rmdir runtime_dir（仅当目录为空时生效）
+        3. 清理 update.log
+        4. 删除状态文件
+
+        Args:
+            logger: 日志记录器
+        """
+        state = UpdateState.load()
+        if not state:
+            return
+
+        current_state = state.get("State", "state", fallback="idle")
+        if current_state not in ("verified", "rollback_done"):
+            return
+
+        logger.info(f"清理更新残留（状态: {current_state}）...")
+
+        # 从状态文件读取运行时路径并删除
+        runtime_keys = ("helper_ps1", "update_ps1", "lock_file", "new_file", "backup_file")
+        for key in runtime_keys:
+            file_path = state[key]
+            if file_path:
+                try:
+                    p = Path(file_path)
+                    if p.exists():
+                        p.unlink()
+                        logger.debug(f"已清理: {p}")
+                except OSError:
+                    pass
+
+        # 尝试 rmdir runtime_dir（仅空目录可删除）
+        runtime_dir = state["runtime_dir"]
+        if runtime_dir:
+            try:
+                rtd = Path(runtime_dir)
+                if rtd.exists() and rtd.is_dir():
+                    rtd.rmdir()
+                    logger.debug(f"已清理运行时目录: {rtd}")
+            except OSError:
+                pass
+
+        # 清理 update.log（与状态文件同目录）
+        log_file = state._file_path.with_name('update.log')
+        try:
+            if log_file.exists():
+                log_file.unlink()
+                logger.debug(f"已清理更新日志: {log_file}")
+        except OSError:
+            pass
+
+        # 删除状态文件
+        state.delete()
+
+    @staticmethod
     def rollback(logger: Optional[logging.Logger] = None) -> bool:
         """
         从 INI 状态文件读取 backup_file 路径，恢复旧版

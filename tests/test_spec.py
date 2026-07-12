@@ -290,3 +290,128 @@ def test_replace_executable_writes_runtime_paths_to_state(monkeypatch, tmp_path)
     assert state['lock_file'] == str(custom_temp / 'v2.0.0' / 'update_started.lock')
     assert state['new_file'] == str(custom_temp / 'v2.0.0' / 'TwoPush.new.exe')
     assert state['backup_file'] == str(custom_temp / 'v2.0.0' / 'TwoPush.backup.exe')
+
+
+# ── 任务 6 测试 ──
+
+def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_path):
+    """清理更新残留时应只删除状态文件记录的运行时文件"""
+    from modules.config_self_updater import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime' / 'v2.0.0'
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+
+    target = program_dir / 'TwoPush.exe'
+    target.write_bytes(b'target')
+    helper = runtime_dir / 'TwoPush_Update_Helper.ps1'
+    update = runtime_dir / 'TwoPush_Update.ps1'
+    lock = runtime_dir / 'update_started.lock'
+    new_file = runtime_dir / 'TwoPush.new.exe'
+    backup = runtime_dir / 'TwoPush.backup.exe'
+    foreign = program_dir / 'Other_Update_Helper.ps1'
+
+    for path in [helper, update, lock, new_file, backup, foreign]:
+        path.write_text('test', encoding='utf-8')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'verified'
+    state['target'] = str(target)
+    state['runtime_dir'] = str(runtime_dir)
+    state['helper_ps1'] = str(helper)
+    state['update_ps1'] = str(update)
+    state['lock_file'] = str(lock)
+    state['new_file'] = str(new_file)
+    state['backup_file'] = str(backup)
+    state.save()
+
+    log_file = program_dir / 'update.log'
+    log_file.write_text('log', encoding='utf-8')
+
+    SelfUpdater._cleanup_update_residue(logging.getLogger('test_cleanup_runtime'))
+
+    assert not helper.exists()
+    assert not update.exists()
+    assert not lock.exists()
+    assert not new_file.exists()
+    assert not backup.exists()
+    assert not runtime_dir.exists()
+    assert not (program_dir / 'update_state.ini').exists()
+    assert not log_file.exists()
+    assert foreign.exists()
+
+
+def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(monkeypatch, tmp_path):
+    """更新未 verified 时不应主动清理 runtime_dir"""
+    from modules.config_self_updater import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime' / 'v2.0.0'
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+    target = program_dir / 'TwoPush.exe'
+    target.write_bytes(b'target')
+    backup = runtime_dir / 'TwoPush.backup.exe'
+    backup.write_text('backup', encoding='utf-8')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'replacing'
+    state['target'] = str(target)
+    state['runtime_dir'] = str(runtime_dir)
+    state['backup_file'] = str(backup)
+    state.save()
+
+    SelfUpdater._cleanup_update_residue(logging.getLogger('test_cleanup_not_verified'))
+
+    assert runtime_dir.exists()
+    assert backup.exists()
+    assert (program_dir / 'update_state.ini').exists()
+
+
+# ── 任务 7 测试 ──
+
+def test_rollback_uses_backup_file_in_runtime_dir(monkeypatch, tmp_path):
+    """回滚应使用状态文件中 runtime_dir 内的 backup_file"""
+    from modules.config_self_updater import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime' / 'v2.0.0'
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+    target = program_dir / 'TwoPush.exe'
+    backup = runtime_dir / 'TwoPush.backup.exe'
+    target.write_bytes(b'broken')
+    backup.write_bytes(b'old')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'failed_disabled'
+    state['target'] = str(target)
+    state['runtime_dir'] = str(runtime_dir)
+    state['backup_file'] = str(backup)
+    state.save()
+
+    assert SelfUpdater.rollback(logging.getLogger('test_rollback_runtime')) is True
+    assert target.read_bytes() == b'old'
+    assert not backup.exists()
+
+
+def test_readme_documents_self_update_runtime_layout():
+    """README 应说明自更新运行时目录布局"""
+    readme = os.path.join(ROOT_DIR, 'README.md')
+    with open(readme, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    assert '自更新运行时文件布局' in content
+    assert 'update_state.ini' in content
+    assert 'update.log' in content
+    assert r'%LOCALAPPDATA%\TwoPush\SelfUpdate\{version}' in content
+    assert r'program_dir\SelfUpdate\{version}' in content
+    for key in ['runtime_dir', 'helper_ps1', 'update_ps1', 'lock_file', 'new_file', 'backup_file']:
+        assert key in content
