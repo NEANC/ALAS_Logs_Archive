@@ -261,6 +261,91 @@ def test_main_build_updater_falls_back_to_program_dir_without_localappdata(monke
     assert paths['runtime_dir'] == exe.parent / 'SelfUpdate' / 'v2.0.0'
 
 
+def test_check_self_update_download_cache_falls_back_to_program_dir(monkeypatch, tmp_path):
+    """LOCALAPPDATA 缺失时下载缓存应落在程序目录 SelfUpdate 下。"""
+    import hashlib
+
+    from modules.self_updater import SelfUpdater
+
+    exe = tmp_path / 'program' / 'ALAS_Logs_Archive.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'old')
+    downloaded = b'new version content'
+    new_sha256 = hashlib.sha256(downloaded).hexdigest()
+    captured = {}
+
+    def fake_download(url: str, save_path: str) -> bool:
+        """模拟下载新版本文件。"""
+        captured['download_url'] = url
+        captured['save_path'] = Path(save_path)
+        Path(save_path).write_bytes(downloaded)
+        return True
+
+    def fake_replace(tmp_path: Path, sha_path: Path, *args) -> None:
+        """记录替换阶段收到的新版本缓存路径。"""
+        captured['tmp_path'] = tmp_path
+        captured['sha_path'] = sha_path
+
+    monkeypatch.delenv('LOCALAPPDATA', raising=False)
+    monkeypatch.setattr('modules.self_updater.get_exe_path', lambda: exe)
+
+    updater = SelfUpdater(
+        github_repo='NEANC/ALAS_Logs_Archive',
+        asset_pattern=r'^ALAS_Logs_Archive-(Nuitka|PyInstaller)-v[\d.]+.*\.exe$',
+        app_name='ALAS_Logs_Archive',
+        current_version='v1.0.0',
+        proxy='',
+        temp_folder='',
+        logger=logging.getLogger('test_download_cache_fallback'),
+        download_func=fake_download,
+        self_update_channel='stable',
+        is_bundled=True,
+        package_type='Nuitka',
+    )
+    monkeypatch.setattr(updater, '_check_system_requirements', lambda: True)
+    monkeypatch.setattr(updater, '_fetch_latest_release', lambda: {
+        'tag_name': 'v2.0.0',
+        'assets': [{
+            'name': 'ALAS_Logs_Archive-Nuitka-v2.0.0.exe',
+            'browser_download_url': 'https://example.invalid/update.exe',
+        }],
+    })
+    monkeypatch.setattr(updater, '_get_asset_sha256', lambda release, asset_name: new_sha256)
+    monkeypatch.setattr(updater, '_fetch_current_release_sha256', lambda package_type: '')
+    monkeypatch.setattr(updater, '_replace_executable', fake_replace)
+
+    assert updater.check_self_update() is True
+
+    expected_cache = exe.parent / 'SelfUpdate' / 'UpdateCache' / 'installs' / 'v2.0.0'
+    assert captured['save_path'] == expected_cache / 'ALAS_Logs_Archive-v2.0.0.exe'
+    assert captured['tmp_path'] == expected_cache / 'ALAS_Logs_Archive-v2.0.0.exe'
+    assert captured['sha_path'] == expected_cache / 'ALAS_Logs_Archive-v2.0.0.sha256'
+
+
+def test_clean_update_cache_empty_temp_folder_falls_back_to_program_dir(monkeypatch, tmp_path):
+    """空 temp_folder 清理程序目录 SelfUpdate 缓存，不清理相对 UpdateCache。"""
+    from modules.self_updater import SelfUpdater
+
+    exe = tmp_path / 'program' / 'ALAS_Logs_Archive.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'exe')
+    program_cache = exe.parent / 'SelfUpdate' / 'UpdateCache'
+    relative_cwd = tmp_path / 'cwd'
+    relative_cache = relative_cwd / 'UpdateCache'
+    program_cache.mkdir(parents=True)
+    relative_cache.mkdir(parents=True)
+    (program_cache / 'cached.txt').write_text('program cache', encoding='utf-8')
+    (relative_cache / 'cached.txt').write_text('relative cache', encoding='utf-8')
+
+    monkeypatch.chdir(relative_cwd)
+    monkeypatch.setattr('modules.self_updater.get_exe_path', lambda: exe)
+
+    SelfUpdater.clean_update_cache('', logging.getLogger('test_clean_cache_fallback'))
+
+    assert not program_cache.exists()
+    assert relative_cache.exists()
+
+
 def test_self_updater_ps_quote_escapes_powershell_special_chars(tmp_path):
     """PowerShell 双引号字符串路径应转义变量、反引号和双引号。"""
     from modules.self_updater import SelfUpdater

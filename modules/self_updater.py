@@ -343,7 +343,8 @@ class SelfUpdater:
             if not exe_url:
                 return False
 
-            cache_dir = Path(self.temp_folder) / "UpdateCache" / "installs" / latest_version
+            cache_root = self._resolve_self_update_root(get_exe_path().parent)
+            cache_dir = cache_root / "UpdateCache" / "installs" / latest_version
             cache_dir.mkdir(parents=True, exist_ok=True)
             tmp_path = cache_dir / f"{self.app_name}-{latest_version}.exe"
             sha_path = cache_dir / f"{self.app_name}-{latest_version}.sha256"
@@ -418,8 +419,8 @@ class SelfUpdater:
             sha_path.unlink(missing_ok=True)
             return False
 
-    def _resolve_runtime_dir(self, program_dir: Path, new_version: str) -> Path:
-        """解析本次更新运行时目录。"""
+    def _resolve_self_update_root(self, program_dir: Path) -> Path:
+        """解析自更新运行时与缓存根目录。"""
         if self.temp_folder:
             temp_folder = Path(self.temp_folder)
         else:
@@ -435,7 +436,11 @@ class SelfUpdater:
             temp_folder = program_dir / 'SelfUpdate'
             temp_folder.mkdir(parents=True, exist_ok=True)
 
-        return temp_folder / new_version
+        return temp_folder
+
+    def _resolve_runtime_dir(self, program_dir: Path, new_version: str) -> Path:
+        """解析本次更新运行时目录。"""
+        return self._resolve_self_update_root(program_dir) / new_version
 
     def _build_update_runtime_paths(
             self,
@@ -773,7 +778,10 @@ class SelfUpdater:
             temp_folder: 临时文件夹路径
             logger: 日志记录器
         """
-        cache_dir = Path(temp_folder) / "UpdateCache"
+        if temp_folder:
+            cache_dir = Path(temp_folder) / "UpdateCache"
+        else:
+            cache_dir = get_exe_path().parent / "SelfUpdate" / "UpdateCache"
         if cache_dir.exists():
             try:
                 shutil.rmtree(cache_dir)
