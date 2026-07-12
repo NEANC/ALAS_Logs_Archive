@@ -129,34 +129,6 @@
 
 ---
 
-### 自更新运行时文件布局
-
-自更新过程中，程序目录根部只保留状态与日志文件：
-
-- `update_state.ini`
-- `update.log`
-
-PowerShell 脚本、启动锁、新版暂存文件和旧版备份文件会写入版本化运行时目录：
-
-```text
-%LOCALAPPDATA%\ALAS_Logs_Archive\SelfUpdate\{version}\
-├── ALAS_Logs_Archive_Update_Helper.ps1
-├── ALAS_Logs_Archive_Update.ps1
-├── update_started.lock
-├── {exe_stem}.new.exe
-└── {exe_stem}.backup.exe
-```
-
-当 `%LOCALAPPDATA%` 不可用或目录创建失败时，回退到：
-
-```text
-program_dir\SelfUpdate\{version}\
-```
-
-`update_state.ini` 会记录 `runtime_dir`、`helper_ps1`、`update_ps1`、`lock_file`、`new_file` 与 `backup_file` 的绝对路径。更新完成前不要手动清理运行时目录，否则可能导致回滚失败。
-
----
-
 ## License
 
 [WTFPL](./LICENSE)
