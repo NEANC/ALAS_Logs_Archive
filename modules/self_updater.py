@@ -418,6 +418,46 @@ class SelfUpdater:
             sha_path.unlink(missing_ok=True)
             return False
 
+    def _resolve_runtime_dir(self, program_dir: Path, new_version: str) -> Path:
+        """解析本次更新运行时目录。"""
+        if self.temp_folder:
+            temp_folder = Path(self.temp_folder)
+        else:
+            local_appdata = os.environ.get('LOCALAPPDATA')
+            if local_appdata:
+                temp_folder = Path(local_appdata) / self.app_name / 'SelfUpdate'
+            else:
+                temp_folder = program_dir / 'SelfUpdate'
+
+        try:
+            temp_folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            temp_folder = program_dir / 'SelfUpdate'
+            temp_folder.mkdir(parents=True, exist_ok=True)
+
+        return temp_folder / new_version
+
+    def _build_update_runtime_paths(
+            self,
+            current_exe: Path,
+            new_version: str) -> dict[str, Path]:
+        """构建本次更新涉及的运行时路径。"""
+        program_dir = current_exe.parent
+        runtime_dir = self._resolve_runtime_dir(program_dir, new_version)
+        temp_folder = runtime_dir.parent
+        return {
+            'program_dir': program_dir,
+            'state_file': program_dir / 'update_state.ini',
+            'log_file': program_dir / 'update.log',
+            'temp_folder': temp_folder,
+            'runtime_dir': runtime_dir,
+            'helper_ps1': runtime_dir / f'{self.app_name}_Update_Helper.ps1',
+            'update_ps1': runtime_dir / f'{self.app_name}_Update.ps1',
+            'lock_file': runtime_dir / 'update_started.lock',
+            'new_file': runtime_dir / f'{current_exe.stem}.new.exe',
+            'backup_file': runtime_dir / f'{current_exe.stem}.backup.exe',
+        }
+
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
                              new_version: str, old_sha256: str,
                              new_sha256: str) -> None:
