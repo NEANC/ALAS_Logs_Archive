@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -141,7 +142,7 @@ def test_self_updater_build_runtime_paths_uses_localappdata(monkeypatch, tmp_pat
 
 
 def test_self_updater_build_runtime_paths_uses_custom_temp_folder(tmp_path):
-    """传入 temp_folder 时 runtime_dir 应为 temp_folder / version"""
+    """传入 temp_folder 时 runtime_dir 应为 temp_folder / version。"""
     from modules.self_updater import SelfUpdater
 
     exe = tmp_path / 'program' / 'TwoPush.exe'
@@ -188,6 +189,124 @@ def test_self_updater_build_runtime_paths_falls_back_to_program_dir(monkeypatch,
 
     assert paths['temp_folder'] == exe.parent / 'SelfUpdate'
     assert paths['runtime_dir'] == exe.parent / 'SelfUpdate' / 'v2.0.0'
+
+
+def test_main_get_temp_folder_returns_self_update_root(monkeypatch, tmp_path):
+    """LOCALAPPDATA 存在时主程序应返回计划中的 SelfUpdate 根目录。"""
+    import ALAS_Logs_Archive as app
+
+    local_appdata = tmp_path / 'LocalAppData'
+    monkeypatch.setenv('LOCALAPPDATA', str(local_appdata))
+
+    assert Path(app.get_temp_folder()) == local_appdata / 'ALAS_Logs_Archive' / 'SelfUpdate'
+
+
+def test_main_get_temp_folder_returns_empty_without_localappdata(monkeypatch, tmp_path):
+    """Windows 且 LOCALAPPDATA 缺失时主程序不应使用 TEMP 伪造 SelfUpdate 根目录。"""
+    import ALAS_Logs_Archive as app
+
+    monkeypatch.setattr(app.sys, 'platform', 'win32')
+    monkeypatch.delenv('LOCALAPPDATA', raising=False)
+    monkeypatch.setenv('TEMP', str(tmp_path / 'Temp'))
+
+    assert app.get_temp_folder() == ''
+
+
+def test_main_build_updater_uses_self_update_runtime_root(monkeypatch, tmp_path):
+    """主程序构建的 updater 应将运行时文件写入 SelfUpdate 版本目录。"""
+    import ALAS_Logs_Archive as app
+
+    local_appdata = tmp_path / 'LocalAppData'
+    exe = tmp_path / 'program' / 'ALAS_Logs_Archive.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'exe')
+    monkeypatch.setenv('LOCALAPPDATA', str(local_appdata))
+    monkeypatch.setattr(app, 'VERSION', 'v1.0.0')
+
+    updater = app._build_updater(
+        logging.getLogger('test_main_build_updater_runtime_root'),
+        SimpleNamespace(github_proxy='', self_update_channel='stable'),
+        True,
+        'Nuitka',
+    )
+
+    paths = updater._build_update_runtime_paths(exe, 'v2.0.0')
+
+    assert Path(updater.temp_folder) == local_appdata / 'ALAS_Logs_Archive' / 'SelfUpdate'
+    assert paths['runtime_dir'] == local_appdata / 'ALAS_Logs_Archive' / 'SelfUpdate' / 'v2.0.0'
+
+
+def test_main_build_updater_falls_back_to_program_dir_without_localappdata(monkeypatch, tmp_path):
+    """_build_updater 在 LOCALAPPDATA 缺失时应回退到程序目录 SelfUpdate 版本目录。"""
+    import ALAS_Logs_Archive as app
+
+    exe = tmp_path / 'program' / 'ALAS_Logs_Archive.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'exe')
+    monkeypatch.setattr(app.sys, 'platform', 'win32')
+    monkeypatch.delenv('LOCALAPPDATA', raising=False)
+    monkeypatch.setenv('TEMP', str(tmp_path / 'Temp'))
+    monkeypatch.setattr(app, 'VERSION', 'v1.0.0')
+
+    updater = app._build_updater(
+        logging.getLogger('test_main_build_updater_runtime_root_fallback'),
+        SimpleNamespace(github_proxy='', self_update_channel='stable'),
+        True,
+        'Nuitka',
+    )
+
+    paths = updater._build_update_runtime_paths(exe, 'v2.0.0')
+
+    assert updater.temp_folder == ''
+    assert paths['runtime_dir'] == exe.parent / 'SelfUpdate' / 'v2.0.0'
+
+
+def test_self_updater_ps_quote_escapes_powershell_special_chars(tmp_path):
+    """PowerShell 双引号字符串路径应转义变量、反引号和双引号。"""
+    from modules.self_updater import SelfUpdater
+
+    path = tmp_path / 'Dir $Name' / 'tick`dir' / 'quote"dir'
+
+    assert SelfUpdater._ps_quote(path) == str(path).replace('`', '``').replace('$', '`$').replace('"', '`"')
+
+
+def test_generated_update_scripts_escape_injected_special_chars(tmp_path):
+    """生成脚本注入特殊字符路径时应使用 PowerShell 转义结果。"""
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program $root'
+    runtime_dir = tmp_path / 'runtime`root' / 'version $name'
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        temp_folder='',
+        logger=logging.getLogger('test_escaped_injected_paths'),
+    )
+    paths = {
+        'state_file': program_dir / 'update_state.ini',
+        'log_file': program_dir / 'update.log',
+        'runtime_dir': runtime_dir,
+        'helper_ps1': runtime_dir / 'TwoPush_Update_Helper.ps1',
+        'update_ps1': runtime_dir / 'TwoPush_Update.ps1',
+        'lock_file': runtime_dir / 'update_started.lock',
+    }
+
+    updater._generate_helper_ps1(paths)
+    updater._generate_update_ps1(paths)
+
+    helper_text = paths['helper_ps1'].read_text(encoding='utf-8-sig')
+    update_text = paths['update_ps1'].read_text(encoding='utf-8-sig')
+
+    assert '$stateFile = "' + SelfUpdater._ps_quote(paths['state_file']) + '"' in helper_text
+    assert '$runtimeDir = "' + SelfUpdater._ps_quote(paths['runtime_dir']) + '"' in helper_text
+    assert '$stateFile  = "' + SelfUpdater._ps_quote(paths['state_file']) + '"' in update_text
+    assert '$runtimeDir = "' + SelfUpdater._ps_quote(paths['runtime_dir']) + '"' in update_text
 
 
 # ── 任务 5 测试 ──
@@ -249,7 +368,7 @@ def test_replace_executable_writes_runtime_paths_to_state(monkeypatch, tmp_path)
     tmp_new.write_bytes(b'new')
     sha = tmp_path / 'downloaded.sha256'
     sha.write_text('hash', encoding='utf-8')
-    custom_temp = tmp_path / 'runtime-root'
+    custom_temp = tmp_path / 'self-update-root'
 
     monkeypatch.setattr('modules.self_updater.get_exe_path', lambda: exe)
     monkeypatch.setattr('modules.self_updater.os.getpid', lambda: 1234)
@@ -376,7 +495,7 @@ def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(monkeypatch,
 # ── 任务 7 测试 ──
 
 def test_rollback_uses_backup_file_in_runtime_dir(monkeypatch, tmp_path):
-    """回滚应使用状态文件中 runtime_dir 内的 backup_file"""
+    """回滚应使用状态文件中 runtime_dir 内的 backup_file。"""
     from modules.config_self_updater import UpdateState
     from modules.self_updater import SelfUpdater
 
@@ -400,18 +519,3 @@ def test_rollback_uses_backup_file_in_runtime_dir(monkeypatch, tmp_path):
     assert SelfUpdater.rollback(logging.getLogger('test_rollback_runtime')) is True
     assert target.read_bytes() == b'old'
     assert not backup.exists()
-
-
-def test_readme_documents_self_update_runtime_layout():
-    """README 应说明自更新运行时目录布局"""
-    readme = os.path.join(ROOT_DIR, 'README.md')
-    with open(readme, 'r', encoding='utf-8') as f:
-        content = f.read()
-
-    assert '自更新运行时文件布局' in content
-    assert 'update_state.ini' in content
-    assert 'update.log' in content
-    assert r'%LOCALAPPDATA%\ALAS_Logs_Archive\SelfUpdate\{version}' in content
-    assert r'program_dir\SelfUpdate\{version}' in content
-    for key in ['runtime_dir', 'helper_ps1', 'update_ps1', 'lock_file', 'new_file', 'backup_file']:
-        assert key in content

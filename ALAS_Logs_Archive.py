@@ -163,12 +163,14 @@ def _handle_update_state(logger: logging.Logger) -> None:
 
 
 def get_temp_folder() -> str:
-    """获取系统缓存文件夹路径（用于自更新下载缓存）"""
+    """获取自更新运行时与缓存根目录路径。"""
     if sys.platform == 'win32':
-        base = os.environ.get('LOCALAPPDATA', os.environ.get('TEMP', str(Path.home())))
+        base = os.environ.get('LOCALAPPDATA')
+        if not base:
+            return ''
     else:
         base = os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))
-    return str(Path(base) / 'ALAS_Logs_Archive' / 'Cache')
+    return str(Path(base) / 'ALAS_Logs_Archive' / 'SelfUpdate')
 
 
 def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
