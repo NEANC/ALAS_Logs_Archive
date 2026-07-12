@@ -321,6 +321,27 @@ class TestHelpers:
         _cleanup_update_residue(logger)
         mock_clean.assert_called_once()
 
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater._cleanup_update_residue")
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater.clean_update_cache")
+    def test_cleanup_update_residue_handles_verified_state(self, mock_clean, mock_residue, monkeypatch, tmp_path):
+        """_cleanup_update_residue 应通过状态处理链路清理 verified 残留。"""
+        from modules.config_self_updater import UpdateState
+
+        exe = tmp_path / "ALAS_Logs_Archive.exe"
+        exe.write_bytes(b"exe")
+        monkeypatch.setattr(sys, "argv", [str(exe)])
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state.save()
+
+        _cleanup_update_residue(logging.getLogger("test_cleanup_verified_chain"))
+
+        mock_residue.assert_called_once()
+        mock_clean.assert_called()
+
+        state.delete()
+
     @mock.patch("modules.self_updater.SelfUpdater.rollback")
     @mock.patch("modules.self_updater.SelfUpdater.clean_update_cache")
     def test_handle_update_state_pending_rollback(self, mock_clean, mock_rollback):

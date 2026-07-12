@@ -681,6 +681,54 @@ def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(monkeypatch,
     assert (program_dir / 'update_state.ini').exists()
 
 
+def test_cleanup_update_residue_removes_runtime_files_after_rollback_done(monkeypatch, tmp_path):
+    """回滚完成终态也应清理状态文件记录的运行时残留。"""
+    from modules.config_self_updater import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime' / 'v2.0.0'
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+
+    target = program_dir / 'TwoPush.exe'
+    target.write_bytes(b'target')
+    helper = runtime_dir / 'TwoPush_Update_Helper.ps1'
+    update = runtime_dir / 'TwoPush_Update.ps1'
+    lock = runtime_dir / 'update_started.lock'
+    new_file = runtime_dir / 'TwoPush.new.exe'
+    backup = runtime_dir / 'TwoPush.backup.exe'
+
+    for path in [helper, update, lock, new_file, backup]:
+        path.write_text('test', encoding='utf-8')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'rollback_done'
+    state['target'] = str(target)
+    state['runtime_dir'] = str(runtime_dir)
+    state['helper_ps1'] = str(helper)
+    state['update_ps1'] = str(update)
+    state['lock_file'] = str(lock)
+    state['new_file'] = str(new_file)
+    state['backup_file'] = str(backup)
+    state.save()
+
+    log_file = program_dir / 'update.log'
+    log_file.write_text('log', encoding='utf-8')
+
+    SelfUpdater._cleanup_update_residue(logging.getLogger('test_cleanup_rollback_done'))
+
+    assert not helper.exists()
+    assert not update.exists()
+    assert not lock.exists()
+    assert not new_file.exists()
+    assert not backup.exists()
+    assert not runtime_dir.exists()
+    assert not log_file.exists()
+    assert not (program_dir / 'update_state.ini').exists()
+
+
 # ── 任务 7 测试 ──
 
 def test_rollback_uses_backup_file_in_runtime_dir(monkeypatch, tmp_path):
