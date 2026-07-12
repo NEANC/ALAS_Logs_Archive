@@ -20,7 +20,7 @@ from ALAS_Logs_Archive import (
     _cleanup_update_residue,
     _handle_update_state,
     _build_updater,
-    get_temp_folder,
+    get_self_update_root,
 )
 
 
@@ -260,10 +260,10 @@ class TestHelpers:
         assert path.endswith("config.ini")
         assert os.path.isabs(path) or os.path.exists(path) or "config.ini" in path
 
-    def test_get_temp_folder_returns_abs(self, monkeypatch, tmp_path):
-        """get_temp_folder 在 Windows 且 LOCALAPPDATA 存在时返回计划目录"""
+    def test_get_self_update_root_returns_abs(self, monkeypatch, tmp_path):
+        """get_self_update_root 在 Windows 且 LOCALAPPDATA 存在时返回计划目录"""
         if sys.platform != "win32":
-            folder = get_temp_folder()
+            folder = get_self_update_root()
             assert "ALAS_Logs_Archive" in folder
             assert "SelfUpdate" in folder
             assert os.path.isabs(folder)
@@ -272,9 +272,9 @@ class TestHelpers:
         local_appdata = tmp_path / "LocalAppData"
         monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
 
-        assert Path(get_temp_folder()) == local_appdata / "ALAS_Logs_Archive" / "SelfUpdate"
+        assert Path(get_self_update_root()) == local_appdata / "ALAS_Logs_Archive" / "SelfUpdate"
 
-    def test_get_temp_folder_windows_returns_empty_without_localappdata(self, monkeypatch):
+    def test_get_self_update_root_windows_returns_empty_without_localappdata(self, monkeypatch):
         """Windows 且 LOCALAPPDATA 缺失时返回空字符串"""
         if sys.platform != "win32":
             pytest.skip("仅 Windows 环境验证 LOCALAPPDATA 缺失行为")
@@ -282,12 +282,12 @@ class TestHelpers:
         monkeypatch.delenv("LOCALAPPDATA", raising=False)
         monkeypatch.setenv("TEMP", "C:\\Temp")
 
-        assert get_temp_folder() == ""
+        assert get_self_update_root() == ""
 
-    def test_get_temp_folder_windows_path(self):
-        """get_temp_folder 在 Windows 下使用 LOCALAPPDATA"""
+    def test_get_self_update_root_windows_path(self):
+        """get_self_update_root 在 Windows 下使用 LOCALAPPDATA"""
         if sys.platform == "win32":
-            folder = get_temp_folder()
+            folder = get_self_update_root()
             localappdata = os.environ.get("LOCALAPPDATA", "")
             assert folder == "" or folder.startswith(localappdata)
 

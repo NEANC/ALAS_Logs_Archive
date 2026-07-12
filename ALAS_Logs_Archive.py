@@ -147,7 +147,7 @@ def _handle_update_state(logger: logging.Logger) -> None:
     current_state = state.get("State", "state", fallback="idle")
     if current_state == "verified":
         logger.info("上次更新已成功完成")
-        SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+        SelfUpdater.clean_update_cache(get_self_update_root(), logger)
         SelfUpdater._cleanup_update_residue(logger)
     elif current_state == "rollback_done":
         logger.warning("上次更新已回滚")
@@ -159,10 +159,10 @@ def _handle_update_state(logger: logging.Logger) -> None:
                             "pending_new_verify", "rollback"):
         logger.warning(f"检测到未完成的更新（状态: {current_state}），尝试回滚...")
         SelfUpdater.rollback(logger)
-        SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+        SelfUpdater.clean_update_cache(get_self_update_root(), logger)
 
 
-def get_temp_folder() -> str:
+def get_self_update_root() -> str:
     """获取自更新运行时与缓存根目录路径。"""
     if sys.platform == 'win32':
         base = os.environ.get('LOCALAPPDATA')
@@ -187,7 +187,7 @@ def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
         app_name="ALAS_Logs_Archive",
         current_version=VERSION,
         proxy=config_mgr.github_proxy,
-        temp_folder=get_temp_folder(),
+        temp_folder=get_self_update_root(),
         logger=logger,
         download_func=download_func,
         self_update_channel=config_mgr.self_update_channel,
@@ -199,7 +199,7 @@ def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
 def _cleanup_update_residue(logger: logging.Logger) -> None:
     """清理上次更新残留（状态文件 + 缓存）"""
     _handle_update_state(logger)
-    SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+    SelfUpdater.clean_update_cache(get_self_update_root(), logger)
 
 
 def _resolve_config_path() -> str:

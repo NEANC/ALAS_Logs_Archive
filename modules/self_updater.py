@@ -76,7 +76,7 @@ class SelfUpdater:
             app_name: 应用名称（用于 PS1 脚本和缓存目录命名）
             current_version: 当前版本号（如 v1.0.0）
             proxy: 代理地址（空字符串表示无代理）
-            temp_folder: 临时文件夹路径
+            temp_folder: 自更新根目录；为空时回退到系统或程序目录 SelfUpdate
             logger: 日志记录器
             download_func: 下载回调 (url, save_path) -> bool，不传则使用内置 requests 下载
             self_update_channel: 更新通道 ('preview', 'stable')
@@ -775,7 +775,7 @@ class SelfUpdater:
         清理自更新缓存目录 UpdateCache
 
         Args:
-            temp_folder: 临时文件夹路径
+            temp_folder: 自更新根目录；为空时回退到程序目录下的 SelfUpdate
             logger: 日志记录器
         """
         if temp_folder:

@@ -191,17 +191,17 @@ def test_self_updater_build_runtime_paths_falls_back_to_program_dir(monkeypatch,
     assert paths['runtime_dir'] == exe.parent / 'SelfUpdate' / 'v2.0.0'
 
 
-def test_main_get_temp_folder_returns_self_update_root(monkeypatch, tmp_path):
+def test_main_get_self_update_root_returns_self_update_root(monkeypatch, tmp_path):
     """LOCALAPPDATA 存在时主程序应返回计划中的 SelfUpdate 根目录。"""
     import ALAS_Logs_Archive as app
 
     local_appdata = tmp_path / 'LocalAppData'
     monkeypatch.setenv('LOCALAPPDATA', str(local_appdata))
 
-    assert Path(app.get_temp_folder()) == local_appdata / 'ALAS_Logs_Archive' / 'SelfUpdate'
+    assert Path(app.get_self_update_root()) == local_appdata / 'ALAS_Logs_Archive' / 'SelfUpdate'
 
 
-def test_main_get_temp_folder_returns_empty_without_localappdata(monkeypatch, tmp_path):
+def test_main_get_self_update_root_returns_empty_without_localappdata(monkeypatch, tmp_path):
     """Windows 且 LOCALAPPDATA 缺失时主程序不应使用 TEMP 伪造 SelfUpdate 根目录。"""
     import ALAS_Logs_Archive as app
 
@@ -209,7 +209,7 @@ def test_main_get_temp_folder_returns_empty_without_localappdata(monkeypatch, tm
     monkeypatch.delenv('LOCALAPPDATA', raising=False)
     monkeypatch.setenv('TEMP', str(tmp_path / 'Temp'))
 
-    assert app.get_temp_folder() == ''
+    assert app.get_self_update_root() == ''
 
 
 def test_main_build_updater_uses_self_update_runtime_root(monkeypatch, tmp_path):
@@ -429,14 +429,14 @@ def test_generated_update_scripts_use_injected_absolute_paths(tmp_path):
     helper_text = paths['helper_ps1'].read_text(encoding='utf-8-sig')
     update_text = paths['update_ps1'].read_text(encoding='utf-8-sig')
 
-    # Should use injected paths
+    # 应使用注入路径
     assert '$stateFile = "' + str(paths['state_file']) + '"' in helper_text
     assert '$logFile   = "' + str(paths['log_file']) + '"' in helper_text
     assert '$lockFile   = "' + str(paths['lock_file']) + '"' in helper_text
     assert '$updatePs1 = "' + str(paths['update_ps1']) + '"' in helper_text
     assert '$stateFile  = "' + str(paths['state_file']) + '"' in update_text
     assert '$logFile    = "' + str(paths['log_file']) + '"' in update_text
-    # Should NOT use Join-Path $scriptDir
+    # 不应再从 $scriptDir 推导状态文件路径
     assert '$stateFile = Join-Path $scriptDir "update_state.ini"' not in helper_text
     assert '$stateFile = Join-Path $scriptDir "update_state.ini"' not in update_text
 
