@@ -856,6 +856,30 @@ class SelfUpdater:
                 except OSError:
                     pass
 
+        legacy_fields = (
+            state["helper_ps1"],
+            state["update_ps1"],
+            state["lock_file"],
+            state["runtime_dir"],
+        )
+        if not any(legacy_fields):
+            program_dir = state._file_path.parent
+            target_stem = Path(state["target"]).stem
+            if not target_stem:
+                target_stem = Path(sys.argv[0]).resolve().stem
+            legacy_files = (
+                program_dir / f"{target_stem}_Update_Helper.ps1",
+                program_dir / f"{target_stem}_Update.ps1",
+                program_dir / "update_started.lock",
+            )
+            for p in legacy_files:
+                try:
+                    if p.exists():
+                        p.unlink()
+                        logger.debug(f"已清理旧版更新残留: {p}")
+                except OSError:
+                    pass
+
         # 尝试 rmdir runtime_dir（仅空目录可删除）
         runtime_dir = state["runtime_dir"]
         if runtime_dir:

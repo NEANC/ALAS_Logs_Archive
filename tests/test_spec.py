@@ -548,6 +548,110 @@ def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_
     assert foreign.exists()
 
 
+def test_cleanup_update_residue_removes_legacy_program_dir_files(monkeypatch, tmp_path):
+    """清理旧版终态状态时应删除程序目录中的旧布局残留。"""
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    program_dir.mkdir()
+
+    target = program_dir / 'ALAS_Logs_Archive.exe'
+    helper = program_dir / 'ALAS_Logs_Archive_Update_Helper.ps1'
+    update = program_dir / 'ALAS_Logs_Archive_Update.ps1'
+    lock = program_dir / 'update_started.lock'
+    new_file = program_dir / 'ALAS_Logs_Archive.new.exe'
+    backup = program_dir / 'ALAS_Logs_Archive.backup.exe'
+    log_file = program_dir / 'update.log'
+    foreign = program_dir / 'Other_Update_Helper.ps1'
+    state_file = program_dir / 'update_state.ini'
+
+    target.write_bytes(b'target')
+    for path in [helper, update, lock, new_file, backup, log_file, foreign]:
+        path.write_text('test', encoding='utf-8')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state_file.write_text(
+        '[State]\n'
+        'state = verified\n'
+        '\n'
+        '[Files]\n'
+        f'target = {target}\n'
+        f'new_file = {new_file}\n'
+        f'backup_file = {backup}\n'
+        '\n'
+        '[Version]\n'
+        '\n'
+        '[Retry]\n'
+        'retry_count = 0\n'
+        'max_retry = 3\n',
+        encoding='utf-8',
+    )
+    state_content = state_file.read_text(encoding='utf-8')
+    for key in ['runtime_dir', 'helper_ps1', 'update_ps1', 'lock_file']:
+        assert key not in state_content
+
+    SelfUpdater._cleanup_update_residue(logging.getLogger('test_cleanup_legacy'))
+
+    assert not helper.exists()
+    assert not update.exists()
+    assert not lock.exists()
+    assert not new_file.exists()
+    assert not backup.exists()
+    assert not log_file.exists()
+    assert not (program_dir / 'update_state.ini').exists()
+    assert foreign.exists()
+
+
+def test_cleanup_update_residue_does_not_use_legacy_layout_when_runtime_fields_partial(monkeypatch, tmp_path):
+    """运行时新增字段不全为空时不应按旧布局清理程序目录文件。"""
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime' / 'v2.0.0'
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+
+    target = program_dir / 'ALAS_Logs_Archive.exe'
+    legacy_helper = program_dir / 'ALAS_Logs_Archive_Update_Helper.ps1'
+    legacy_update = program_dir / 'ALAS_Logs_Archive_Update.ps1'
+    legacy_lock = program_dir / 'update_started.lock'
+    runtime_helper = runtime_dir / 'ALAS_Logs_Archive_Update_Helper.ps1'
+    runtime_update = runtime_dir / 'ALAS_Logs_Archive_Update.ps1'
+    state_file = program_dir / 'update_state.ini'
+
+    target.write_bytes(b'target')
+    for path in [legacy_helper, legacy_update, legacy_lock, runtime_helper, runtime_update]:
+        path.write_text('test', encoding='utf-8')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state_file.write_text(
+        '[State]\n'
+        'state = verified\n'
+        '\n'
+        '[Files]\n'
+        f'target = {target}\n'
+        f'runtime_dir = {runtime_dir}\n'
+        f'helper_ps1 = {runtime_helper}\n'
+        f'update_ps1 = {runtime_update}\n'
+        '\n'
+        '[Version]\n'
+        '\n'
+        '[Retry]\n'
+        'retry_count = 0\n'
+        'max_retry = 3\n',
+        encoding='utf-8',
+    )
+
+    SelfUpdater._cleanup_update_residue(logging.getLogger('test_cleanup_partial_runtime'))
+
+    assert legacy_helper.exists()
+    assert legacy_update.exists()
+    assert legacy_lock.exists()
+    assert not runtime_helper.exists()
+    assert not runtime_update.exists()
+    assert not state_file.exists()
+
+
 def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(monkeypatch, tmp_path):
     """更新未 verified 时不应主动清理 runtime_dir"""
     from modules.config_self_updater import UpdateState
