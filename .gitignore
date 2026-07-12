@@ -193,6 +193,7 @@ ds*.md
 logs/
 log/
 
+docs/superpowers/
 /.trae/
 /*.yaml
 /*.yml
