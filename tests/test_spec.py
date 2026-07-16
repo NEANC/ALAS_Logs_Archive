@@ -195,6 +195,7 @@ def test_main_get_self_update_root_returns_self_update_root(monkeypatch, tmp_pat
     """LOCALAPPDATA 存在时主程序应返回计划中的 SelfUpdate 根目录。"""
     import ALAS_Logs_Archive as app
 
+    monkeypatch.setattr(app.sys, 'platform', 'win32')
     local_appdata = tmp_path / 'LocalAppData'
     monkeypatch.setenv('LOCALAPPDATA', str(local_appdata))
 
@@ -216,6 +217,7 @@ def test_main_build_updater_uses_self_update_runtime_root(monkeypatch, tmp_path)
     """主程序构建的 updater 应将运行时文件写入 SelfUpdate 版本目录。"""
     import ALAS_Logs_Archive as app
 
+    monkeypatch.setattr(app.sys, 'platform', 'win32')
     local_appdata = tmp_path / 'LocalAppData'
     exe = tmp_path / 'program' / 'ALAS_Logs_Archive.exe'
     exe.parent.mkdir()
@@ -457,6 +459,8 @@ def test_replace_executable_writes_runtime_paths_to_state(monkeypatch, tmp_path)
 
     monkeypatch.setattr('modules.self_updater.get_exe_path', lambda: exe)
     monkeypatch.setattr('modules.self_updater.os.getpid', lambda: 1234)
+    monkeypatch.setattr('modules.self_updater.subprocess.CREATE_NEW_PROCESS_GROUP', 0, raising=False)
+    monkeypatch.setattr('modules.self_updater.subprocess.CREATE_NO_WINDOW', 0, raising=False)
 
     class FakeProc:
         returncode = None
