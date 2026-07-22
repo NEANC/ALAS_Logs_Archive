@@ -137,12 +137,12 @@ def _decompress_entry_streaming(zipf: zipfile.ZipFile, info: zipfile.ZipInfo,
                         dst.write(data)
                 except EOFError:
                     break
-            # flush 剩余尾部数据
+            # 刷出解压器内部缓冲的尾部数据
             try:
-                tail = decompressor.flush()
+                tail = decompressor.decompress(b'')
                 if tail:
                     dst.write(tail)
-            except Exception:
+            except EOFError:
                 pass
         else:
             # 未压缩：直接流式复制

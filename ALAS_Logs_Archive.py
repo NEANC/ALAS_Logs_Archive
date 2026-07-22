@@ -11,6 +11,8 @@ from pathlib import Path
 from functools import partial
 from typing import List
 
+import colorama
+
 from modules.alas_logger_processor import delete_error_folder, delete_gui_files
 from modules.config_manager import CONFIG_FILE, ConfigManager
 from modules.download_manager import download_with_progress
@@ -108,7 +110,7 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("--expected-version", type=str, default="", help=argparse.SUPPRESS)
     parser.add_argument("--retry-update", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--update-failed", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("zipfile", nargs="?", default=None, help="直接指定ZIP文件解压到当前目录（用于文件拖放）")
+    parser.add_argument("zipfile", nargs="?", default=None, help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -145,21 +147,11 @@ def _handle_update_state(logger: logging.Logger) -> None:
     current_state = state.get("State", "state", fallback="idle")
     if current_state == "verified":
         logger.info("上次更新已成功完成")
-        SelfUpdater.clean_update_cache(get_temp_folder(), logger)
-        SelfUpdater.clean_update_scripts(
-            os.path.dirname(sys.argv[0]), "ALAS_Logs_Archive", logger,
-            new_file=state["new_file"],
-            backup_file=state["backup_file"],
-        )
-        state.delete()
+        SelfUpdater.clean_update_cache(get_self_update_root(), logger)
+        SelfUpdater._cleanup_update_residue(logger)
     elif current_state == "rollback_done":
         logger.warning("上次更新已回滚")
-        SelfUpdater.clean_update_scripts(
-            os.path.dirname(sys.argv[0]), "ALAS_Logs_Archive", logger,
-            new_file=state["new_file"],
-            backup_file=state["backup_file"],
-        )
-        state.delete()
+        SelfUpdater._cleanup_update_residue(logger)
     elif current_state == "failed_disabled":
         failed_ver = state["new_version"]
         logger.warning(f"版本 {failed_ver} 此前更新失败，已禁用自动更新。")
@@ -167,16 +159,18 @@ def _handle_update_state(logger: logging.Logger) -> None:
                             "pending_new_verify", "rollback"):
         logger.warning(f"检测到未完成的更新（状态: {current_state}），尝试回滚...")
         SelfUpdater.rollback(logger)
-        SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+        SelfUpdater.clean_update_cache(get_self_update_root(), logger)
 
 
-def get_temp_folder() -> str:
-    """获取系统缓存文件夹路径（用于自更新下载缓存）"""
+def get_self_update_root() -> str:
+    """获取自更新运行时与缓存根目录路径。"""
     if sys.platform == 'win32':
-        base = os.environ.get('LOCALAPPDATA', os.environ.get('TEMP', str(Path.home())))
+        base = os.environ.get('LOCALAPPDATA')
+        if not base:
+            return ''
     else:
         base = os.environ.get('XDG_CACHE_HOME', str(Path.home() / '.cache'))
-    return str(Path(base) / 'ALAS_Logs_Archive' / 'Cache')
+    return str(Path(base) / 'ALAS_Logs_Archive' / 'SelfUpdate')
 
 
 def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
@@ -193,7 +187,7 @@ def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
         app_name="ALAS_Logs_Archive",
         current_version=VERSION,
         proxy=config_mgr.github_proxy,
-        temp_folder=get_temp_folder(),
+        temp_folder=get_self_update_root(),
         logger=logger,
         download_func=download_func,
         self_update_channel=config_mgr.self_update_channel,
@@ -205,7 +199,7 @@ def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
 def _cleanup_update_residue(logger: logging.Logger) -> None:
     """清理上次更新残留（状态文件 + 缓存）"""
     _handle_update_state(logger)
-    SelfUpdater.clean_update_cache(get_temp_folder(), logger)
+    SelfUpdater.clean_update_cache(get_self_update_root(), logger)
 
 
 def _resolve_config_path() -> str:
@@ -285,7 +279,6 @@ def main():
         log_level = getattr(logging, args.console_level) if args.console_level else logging.INFO
 
         logger = setup_logger(log_folder, max_log_files, log_level, save_logs)
-        detect_package_type()
         logger.debug(f"版本号: {VERSION}")
 
         target_folder = args.target
@@ -398,4 +391,5 @@ def main():
 
 if __name__ == "__main__":
     setup_utf8_console()
+    colorama.init(autoreset=True)
     main()

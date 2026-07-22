@@ -29,6 +29,16 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from modules.config_self_updater import UpdateState
+from modules.ps1_fragments import (
+    generate_common_base_functions_ps1,
+    generate_common_state_functions_ps1,
+    generate_helper_argument_functions_ps1,
+    generate_helper_file_cleanup_functions_ps1,
+    generate_helper_lifecycle_functions_ps1,
+    generate_helper_retry_functions_ps1,
+    generate_move_with_retry_ps1,
+    generate_sha256_function_ps1,
+)
 from modules.self_utils import (
     calculate_sha256,
     detect_package_type,
@@ -66,7 +76,7 @@ class SelfUpdater:
             app_name: 应用名称（用于 PS1 脚本和缓存目录命名）
             current_version: 当前版本号（如 v1.0.0）
             proxy: 代理地址（空字符串表示无代理）
-            temp_folder: 临时文件夹路径
+            temp_folder: 自更新根目录；为空时回退到系统或程序目录 SelfUpdate
             logger: 日志记录器
             download_func: 下载回调 (url, save_path) -> bool，不传则使用内置 requests 下载
             self_update_channel: 更新通道 ('preview', 'stable')
@@ -280,7 +290,7 @@ class SelfUpdater:
         Returns:
             bool: 是否需要退出以完成更新
         """
-        self.logger.info("开始检查软件版本...")
+        self.logger.info("正在检查软件更新...")
 
         if self._is_bundled is None:
             self._is_bundled, self._package_type = detect_package_type()
@@ -333,7 +343,8 @@ class SelfUpdater:
             if not exe_url:
                 return False
 
-            cache_dir = Path(self.temp_folder) / "UpdateCache" / "installs" / latest_version
+            cache_root = self._resolve_self_update_root(get_exe_path().parent)
+            cache_dir = cache_root / "UpdateCache" / "installs" / latest_version
             cache_dir.mkdir(parents=True, exist_ok=True)
             tmp_path = cache_dir / f"{self.app_name}-{latest_version}.exe"
             sha_path = cache_dir / f"{self.app_name}-{latest_version}.sha256"
@@ -408,6 +419,50 @@ class SelfUpdater:
             sha_path.unlink(missing_ok=True)
             return False
 
+    def _resolve_self_update_root(self, program_dir: Path) -> Path:
+        """解析自更新运行时与缓存根目录。"""
+        if self.temp_folder:
+            temp_folder = Path(self.temp_folder)
+        else:
+            local_appdata = os.environ.get('LOCALAPPDATA')
+            if local_appdata:
+                temp_folder = Path(local_appdata) / self.app_name / 'SelfUpdate'
+            else:
+                temp_folder = program_dir / 'SelfUpdate'
+
+        try:
+            temp_folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            temp_folder = program_dir / 'SelfUpdate'
+            temp_folder.mkdir(parents=True, exist_ok=True)
+
+        return temp_folder
+
+    def _resolve_runtime_dir(self, program_dir: Path, new_version: str) -> Path:
+        """解析本次更新运行时目录。"""
+        return self._resolve_self_update_root(program_dir) / new_version
+
+    def _build_update_runtime_paths(
+            self,
+            current_exe: Path,
+            new_version: str) -> dict[str, Path]:
+        """构建本次更新涉及的运行时路径。"""
+        program_dir = current_exe.parent
+        runtime_dir = self._resolve_runtime_dir(program_dir, new_version)
+        temp_folder = runtime_dir.parent
+        return {
+            'program_dir': program_dir,
+            'state_file': program_dir / 'update_state.ini',
+            'log_file': program_dir / 'update.log',
+            'temp_folder': temp_folder,
+            'runtime_dir': runtime_dir,
+            'helper_ps1': runtime_dir / f'{self.app_name}_Update_Helper.ps1',
+            'update_ps1': runtime_dir / f'{self.app_name}_Update.ps1',
+            'lock_file': runtime_dir / 'update_started.lock',
+            'new_file': runtime_dir / f'{current_exe.stem}.new.exe',
+            'backup_file': runtime_dir / f'{current_exe.stem}.backup.exe',
+        }
+
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
                              new_version: str, old_sha256: str,
                              new_sha256: str) -> None:
@@ -418,9 +473,10 @@ class SelfUpdater:
             RuntimeError: helper.ps1 启动失败
         """
         current_exe = get_exe_path()
-        base_dir = current_exe.parent
-        new_exe = base_dir / f"{current_exe.stem}.new.exe"
-        backup_exe = base_dir / f"{current_exe.stem}.backup.exe"
+        paths = self._build_update_runtime_paths(current_exe, new_version)
+        paths['runtime_dir'].mkdir(parents=True, exist_ok=True)
+        new_exe = paths['new_file']
+        backup_exe = paths['backup_file']
 
         shutil.copy2(tmp_path, new_exe)
         self.logger.info(f"新版本已暂存: {new_exe}")
@@ -430,6 +486,10 @@ class SelfUpdater:
         state["target"] = str(current_exe)
         state["new_file"] = str(new_exe)
         state["backup_file"] = str(backup_exe)
+        state["runtime_dir"] = str(paths['runtime_dir'])
+        state["helper_ps1"] = str(paths['helper_ps1'])
+        state["update_ps1"] = str(paths['update_ps1'])
+        state["lock_file"] = str(paths['lock_file'])
         state["old_version"] = self.current_version
         state["new_version"] = new_version
         state["old_sha256"] = old_sha256
@@ -438,18 +498,18 @@ class SelfUpdater:
         state.set("Retry", "max_retry", "3")
         state.save()
 
-        self._generate_helper_ps1(base_dir)
-        self._generate_update_ps1(base_dir)
-        self.logger.info(f"已生成更新脚本到目录: {base_dir}")
+        self._generate_helper_ps1(paths)
+        self._generate_update_ps1(paths)
+        self.logger.info(f"已生成更新脚本到目录: {paths['runtime_dir']}")
 
         state.transition("helper_started")
 
         self.logger.info("启动更新进程...")
-        lock_file = base_dir / "update_started.lock"
+        lock_file = paths['lock_file']
         if lock_file.exists():
             lock_file.unlink()
 
-        helper_ps1 = base_dir / f"{self.app_name}_Update_Helper.ps1"
+        helper_ps1 = paths['helper_ps1']
         proc = subprocess.Popen(
             [
                 "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -476,9 +536,9 @@ class SelfUpdater:
             pass
         raise RuntimeError("启动更新脚本失败：helper.ps1 未在 15 秒内就绪")
 
-    # ── PS1 脚本生成（从 modules/self_updater.py 完整复用） ──
+    # ── PS1 脚本生成 ──
 
-    def _generate_helper_ps1(self, script_dir: Path) -> None:
+    def _generate_helper_ps1(self, paths: dict[str, Path]) -> None:
         """
         生成 {app}_Update_Helper.ps1
         """.format(app=self.app_name)
@@ -491,293 +551,24 @@ class SelfUpdater:
             #>
             param([int]$ParentPid)
 
-            $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-            $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
-            $scriptTag  = ($scriptName -split '_')[-1]
-            $lockFile   = Join-Path $scriptDir "update_started.lock"
+            $runtimeDir = "{RUNTIME_DIR}"
+            $lockFile   = "{LOCK_FILE}"
 
             try { New-Item -Path $lockFile -ItemType File -Force | Out-Null } catch {}
 
-            $stateFile = Join-Path $scriptDir "update_state.ini"
-            $logFile   = Join-Path $scriptDir "update.log"
-            $updatePs1 = Join-Path $scriptDir "__APP___Update.ps1"
-        """).replace("__APP__", self.app_name) + textwrap.dedent(r"""
-
-            function Normalize-IniValue($value) {
-                if ($null -eq $value) { return "" }
-                return ([string]$value) -replace "(`r`n|`n|`r)", " "
-            }
-
-            function Quote-Arg($arg) {
-                if ($null -eq $arg) { return '""' }
-                $s = [string]$arg
-                $s = $s -replace '\\(?=")', '\\'
-                $s = $s -replace '"', '\"'
-                if ($s -match '\s' -or $s -eq '') {
-                    return '"' + $s + '"'
-                }
-                return $s
-            }
-
-            function Assert-NotEmpty($name, $value) {
-                if ([string]::IsNullOrWhiteSpace($value)) {
-                    throw "missing required ini value: $name"
-                }
-            }
-
-            function Write-Log($level, $message) {
-                try {
-                    $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
-                    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
-                } catch {}
-            }
-
-            function Read-IniValue($section, $key) {
-                try {
-                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
-                    $sectionEsc = [regex]::Escape("[$section]")
-                    $keyEsc = [regex]::Escape($key)
-                    $sectionPattern = "(?ms)^$sectionEsc\s*\r?\n(.*?)(?=^\s*\[|\z)"
-                    if ($content -match $sectionPattern) {
-                        $keyPattern = "(?m)^$keyEsc\s*=\s*(.*?)[\r\t ]*$"
-                        if ($matches[1] -match $keyPattern) { return $matches[1] }
-                    }
-                } catch {}
-                return ""
-            }
-
-            function Write-IniValue($section, $key, $value) {
-                try {
-                    $value = Normalize-IniValue $value
-                    $lines = @(Get-Content -LiteralPath $stateFile -Encoding UTF8 -ErrorAction Stop)
-
-                    $out = New-Object System.Collections.Generic.List[string]
-                    $inSection = $false
-                    $sectionFound = $false
-                    $keyWritten = $false
-                    $keyEsc = [regex]::Escape($key)
-
-                    foreach ($line in $lines) {
-                        if ($line -match '^\s*\[(.+?)\]\s*$') {
-                            if ($inSection -and -not $keyWritten) {
-                                $out.Add("$key = $value")
-                                $keyWritten = $true
-                            }
-                            $inSection = ($matches[1] -eq $section)
-                            if ($inSection) { $sectionFound = $true }
-                            $out.Add($line)
-                            continue
-                        }
-
-                        if ($inSection -and -not $keyWritten -and $line -match "^\s*$keyEsc\s*=") {
-                            $out.Add("$key = $value")
-                            $keyWritten = $true
-                            continue
-                        }
-
-                        $out.Add($line)
-                    }
-
-                    if (-not $sectionFound) {
-                        if ($out.Count -gt 0 -and $out[-1].Trim() -ne '') { $out.Add("") }
-                        $out.Add("[$section]")
-                        $out.Add("$key = $value")
-                    } elseif ($inSection -and -not $keyWritten) {
-                        $out.Add("$key = $value")
-                    }
-
-                    $tmp = "$stateFile.tmp"
-                    [System.IO.File]::WriteAllLines($tmp, [string[]]$out.ToArray())
-                    Move-Item -LiteralPath $tmp -Destination $stateFile -Force
-                } catch {
-                    Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
-                }
-            }
-
-            function Set-UpdateStatus($state, $step, $message, $progress, $level) {
-                $message = Normalize-IniValue $message
-                if ($state) { Write-IniValue "State" "state" $state }
-                if ($step) { Write-IniValue "State" "step" $step }
-                if ($null -ne $progress) { Write-IniValue "State" "progress" "$progress" }
-                if ($level) { Write-IniValue "State" "level" $level }
-                Write-IniValue "State" "message" $message
-                Write-IniValue "State" "updated_at" (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')
-                if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
-                Write-Log $level $message
-                try {
-                    Write-Host ("[{0}] [{1}] {2} - {3}" -f (Get-Date -Format "HH:mm:ss"), $level, $step, $message)
-                } catch {}
-            }
-
-            function Get-RetryOrDefault($name, $default) {
-                $val = Read-IniValue "Retry" $name
-                if ($val -match '^\d+$') { return [int]$val }
-                return $default
-            }
-
-            function Remove-WithRetry($path, $timeoutSec) {
-                $deadline = (Get-Date).AddSeconds($timeoutSec)
-                $lastError = $null
-                while ((Get-Date) -lt $deadline) {
-                    try {
-                        if (Test-Path -LiteralPath $path) {
-                            Remove-Item -LiteralPath $path -Force -ErrorAction Stop
-                        }
-                        return
-                    } catch {
-                        $lastError = $_.Exception.Message
-                        Start-Sleep -Milliseconds 1000
-                    }
-                }
-                throw "Remove failed after retry: $path ; $lastError"
-            }
-
-            function Move-WithRetry($src, $dst, $timeoutSec) {
-                $deadline = (Get-Date).AddSeconds($timeoutSec)
-                $lastError = $null
-                while ((Get-Date) -lt $deadline) {
-                    try {
-                        Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
-                        return
-                    } catch {
-                        $lastError = $_.Exception.Message
-                        Start-Sleep -Milliseconds 1000
-                    }
-                }
-                throw "Move failed after retry: $src -> $dst ; $lastError"
-            }
-
-            function Commit-Update {
-                try {
-                    $backup = Read-IniValue "Files" "backup_file"
-                    Write-IniValue "Retry" "retry_count" "0"
-                    Write-IniValue "State" "last_error" ""
-                    Write-IniValue "State" "state" "verified"
-                    if ($backup -and (Test-Path -LiteralPath $backup)) {
-                        Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
-                    }
-                    if (Test-Path -LiteralPath $lockFile) {
-                        Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue
-                    }
-                    Write-Log "INFO" "update committed"
-                } catch {
-                    Write-Log "WARN" "Commit-Update failed: $($_.Exception.Message)"
-                }
-            }
-
-            function Restore-Backup($reason) {
-                Set-UpdateStatus "rollback" "rollback_start" "准备回滚：$reason" 80 "ERROR"
-                try {
-                    $target = Read-IniValue "Files" "target"
-                    $backup = Read-IniValue "Files" "backup_file"
-
-                    Assert-NotEmpty "Files.target" $target
-                    Assert-NotEmpty "Files.backup_file" $backup
-
-                    if (!(Test-Path -LiteralPath $backup)) {
-                        Set-UpdateStatus "failed_disabled" "rollback_no_backup" "备份文件不存在: $backup" 100 "ERROR"
-                        if (Test-Path -LiteralPath $target) {
-                            Start-NormalAppVisible $target @('--update-failed')
-                        }
-                        exit 2
-                    }
-
-                    if (Test-Path -LiteralPath $target) {
-                        Remove-WithRetry $target 30
-                    }
-                    Move-WithRetry $backup $target 60
-                    Set-UpdateStatus "rollback_done" "rollback_done" "已恢复旧版本：$reason" 100 "ERROR"
-
-                    $retry = Get-RetryOrDefault "retry_count" 0
-                    $max   = Get-RetryOrDefault "max_retry" 3
-                    $retry++
-                    Write-IniValue "Retry" "retry_count" "$retry"
-
-                    if ($retry -lt $max) {
-                        Start-NormalAppVisible $target @('--retry-update')
-                    } else {
-                        Set-UpdateStatus "failed_disabled" "retry_limit_reached" "更新失败次数达到上限，已禁用本版本更新" 100 "ERROR"
-                        Start-NormalAppVisible $target @('--update-failed')
-                    }
-                    exit 1
-                } catch {
-                    Set-UpdateStatus "failed_disabled" "rollback_failed" "回滚失败: $($_.Exception.Message)" 100 "ERROR"
-                    exit 3
-                }
-            }
-
-            function Start-ProcWait($filePath, [string[]]$argList, $timeoutSec, [bool]$resetPyInstallerEnv = $false) {
-                $psi = New-Object System.Diagnostics.ProcessStartInfo
-                $psi.FileName = $filePath
-                $psi.UseShellExecute = $false
-                $psi.CreateNoWindow = $true
-                $psi.WorkingDirectory = Split-Path -Parent $filePath
-                $argsArr = @($argList | ForEach-Object { Quote-Arg $_ })
-                $psi.Arguments = if ($argsArr.Count -gt 0) { $argsArr -join ' ' } else { '' }
-
-                if ($resetPyInstallerEnv) {
-                    $psi.EnvironmentVariables["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
-                    foreach ($k in @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
-                                     "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
-                                     "_PYI_LINUX_PROCESS_NAME")) {
-                        if ($psi.EnvironmentVariables.ContainsKey($k)) {
-                            $psi.EnvironmentVariables.Remove($k)
-                        }
-                    }
-                }
-
-                $proc = [System.Diagnostics.Process]::Start($psi)
-                if ($proc.WaitForExit($timeoutSec * 1000)) {
-                    return $proc.ExitCode
-                }
-                try {
-                    if (-not $proc.HasExited) {
-                        $proc.Kill()
-                        $proc.WaitForExit(5000) | Out-Null
-                    }
-                } catch {}
-                return -1
-            }
-
-            function Start-NormalAppVisible($filePath, [string[]]$argList = @()) {
-                $workDir = Split-Path -Parent $filePath
-
-                $oldReset = [Environment]::GetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", "Process")
-                $oldPyi = @{}
-                $pyiKeys = @("_PYI_ARCHIVE_FILE", "_PYI_PARENT_PROCESS_LEVEL",
-                             "_PYI_APPLICATION_HOME_DIR", "_PYI_SPLASH_IPC",
-                             "_PYI_LINUX_PROCESS_NAME")
-                foreach ($k in $pyiKeys) {
-                    $oldPyi[$k] = [Environment]::GetEnvironmentVariable($k, "Process")
-                }
-
-                try {
-                    [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", "1", "Process")
-                    foreach ($k in $pyiKeys) {
-                        [Environment]::SetEnvironmentVariable($k, $null, "Process")
-                    }
-
-                    $argsArr = @($argList | ForEach-Object { Quote-Arg $_ })
-                    $argString = if ($argsArr.Count -gt 0) { $argsArr -join ' ' } else { '' }
-
-                    $startArgs = @{
-                        FilePath = $filePath
-                        WorkingDirectory = $workDir
-                        WindowStyle = 'Normal'
-                    }
-                    if ($argString) {
-                        $startArgs.ArgumentList = $argString
-                    }
-                    Start-Process @startArgs
-                }
-                finally {
-                    [Environment]::SetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", $oldReset, "Process")
-                    foreach ($k in $pyiKeys) {
-                        [Environment]::SetEnvironmentVariable($k, $oldPyi[$k], "Process")
-                    }
-                }
-            }
-
+            $stateFile = "{STATE_FILE}"
+            $logFile   = "{LOG_FILE}"
+            $updatePs1 = "{UPDATE_PS1}"
+        """).replace("__APP__", self.app_name)
+        ps1_content += generate_common_base_functions_ps1()
+        ps1_content += generate_helper_argument_functions_ps1()
+        ps1_content += generate_sha256_function_ps1()
+        ps1_content += generate_common_state_functions_ps1()
+        ps1_content += generate_helper_retry_functions_ps1()
+        ps1_content += generate_helper_file_cleanup_functions_ps1()
+        ps1_content += generate_move_with_retry_ps1()
+        ps1_content += generate_helper_lifecycle_functions_ps1()
+        ps1_content += textwrap.dedent(r'''
             try {
                 Set-UpdateStatus "helper_started" "helper_started" "更新 Helper 已启动" 10 "INFO"
 
@@ -801,7 +592,7 @@ class SelfUpdater:
                 $newSha256 = Read-IniValue "Version" "new_sha256"
                 Assert-NotEmpty "Files.target" $target
                 if ($newSha256) {
-                    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
+                    $actual = Get-SHA256 $target
                     if ($actual -ne $newSha256.ToLowerInvariant()) {
                         Restore-Backup "target hash mismatch after replace"
                     }
@@ -829,12 +620,17 @@ class SelfUpdater:
                 Write-Log "ERROR" "helper error: $($_.Exception.Message)"
                 Restore-Backup $_.Exception.Message
             }
-        """).lstrip("\n")
+        ''').lstrip("\n")
 
-        script_path = script_dir / f"{self.app_name}_Update_Helper.ps1"
-        script_path.write_text(ps1_content, encoding='utf-8-sig')
+        ps1_content = ps1_content.replace('{RUNTIME_DIR}', self._ps_quote(paths['runtime_dir']))
+        ps1_content = ps1_content.replace('{LOCK_FILE}', self._ps_quote(paths['lock_file']))
+        ps1_content = ps1_content.replace('{STATE_FILE}', self._ps_quote(paths['state_file']))
+        ps1_content = ps1_content.replace('{LOG_FILE}', self._ps_quote(paths['log_file']))
+        ps1_content = ps1_content.replace('{UPDATE_PS1}', self._ps_quote(paths['update_ps1']))
 
-    def _generate_update_ps1(self, script_dir: Path) -> None:
+        paths['helper_ps1'].write_text(ps1_content, encoding='utf-8-sig')
+
+    def _generate_update_ps1(self, paths: dict[str, Path]) -> None:
         """
         生成 {app}_Update.ps1
         """.format(app=self.app_name)
@@ -846,122 +642,15 @@ class SelfUpdater:
                 替换 app.exe 为新版本：app.exe - app.backup.exe, app.new.exe - app.exe
             #>
 
-            $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-            $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
-            $scriptTag  = ($scriptName -split '_')[-1]
-            $stateFile  = Join-Path $scriptDir "update_state.ini"
-            $logFile    = Join-Path $scriptDir "update.log"
-        """).replace("__APP__", self.app_name) + textwrap.dedent(r"""
-
-            function Normalize-IniValue($value) {
-                if ($null -eq $value) { return "" }
-                return ([string]$value) -replace "(`r`n|`n|`r)", " "
-            }
-
-            function Assert-NotEmpty($name, $value) {
-                if ([string]::IsNullOrWhiteSpace($value)) {
-                    throw "missing required ini value: $name"
-                }
-            }
-
-            function Write-Log($level, $message) {
-                try {
-                    $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
-                    Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
-                } catch {}
-            }
-
-            function Read-IniValue($section, $key) {
-                try {
-                    $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
-                    $sectionEsc = [regex]::Escape("[$section]")
-                    $keyEsc = [regex]::Escape($key)
-                    $sectionPattern = "(?ms)^$sectionEsc\s*\r?\n(.*?)(?=^\s*\[|\z)"
-                    if ($content -match $sectionPattern) {
-                        $keyPattern = "(?m)^$keyEsc\s*=\s*(.*?)[\r\t ]*$"
-                        if ($matches[1] -match $keyPattern) { return $matches[1] }
-                    }
-                } catch {}
-                return ""
-            }
-
-            function Write-IniValue($section, $key, $value) {
-                try {
-                    $value = Normalize-IniValue $value
-                    $lines = @(Get-Content -LiteralPath $stateFile -Encoding UTF8 -ErrorAction Stop)
-
-                    $out = New-Object System.Collections.Generic.List[string]
-                    $inSection = $false
-                    $sectionFound = $false
-                    $keyWritten = $false
-                    $keyEsc = [regex]::Escape($key)
-
-                    foreach ($line in $lines) {
-                        if ($line -match '^\s*\[(.+?)\]\s*$') {
-                            if ($inSection -and -not $keyWritten) {
-                                $out.Add("$key = $value")
-                                $keyWritten = $true
-                            }
-                            $inSection = ($matches[1] -eq $section)
-                            if ($inSection) { $sectionFound = $true }
-                            $out.Add($line)
-                            continue
-                        }
-
-                        if ($inSection -and -not $keyWritten -and $line -match "^\s*$keyEsc\s*=") {
-                            $out.Add("$key = $value")
-                            $keyWritten = $true
-                            continue
-                        }
-
-                        $out.Add($line)
-                    }
-
-                    if (-not $sectionFound) {
-                        if ($out.Count -gt 0 -and $out[-1].Trim() -ne '') { $out.Add("") }
-                        $out.Add("[$section]")
-                        $out.Add("$key = $value")
-                    } elseif ($inSection -and -not $keyWritten) {
-                        $out.Add("$key = $value")
-                    }
-
-                    $tmp = "$stateFile.tmp"
-                    [System.IO.File]::WriteAllLines($tmp, [string[]]$out.ToArray())
-                    Move-Item -LiteralPath $tmp -Destination $stateFile -Force
-                } catch {
-                    Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
-                }
-            }
-
-            function Set-UpdateStatus($state, $step, $message, $progress, $level) {
-                $message = Normalize-IniValue $message
-                if ($state) { Write-IniValue "State" "state" $state }
-                if ($step) { Write-IniValue "State" "step" $step }
-                if ($null -ne $progress) { Write-IniValue "State" "progress" "$progress" }
-                if ($level) { Write-IniValue "State" "level" $level }
-                Write-IniValue "State" "message" $message
-                Write-IniValue "State" "updated_at" (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')
-                if ($level -eq "ERROR") { Write-IniValue "State" "last_error" $message }
-                Write-Log $level $message
-                try {
-                    Write-Host ("[{0}] [{1}] {2} - {3}" -f (Get-Date -Format "HH:mm:ss"), $level, $step, $message)
-                } catch {}
-            }
-
-            function Move-WithRetry($src, $dst, $timeoutSec) {
-                $deadline = (Get-Date).AddSeconds($timeoutSec)
-                $lastError = $null
-                while ((Get-Date) -lt $deadline) {
-                    try {
-                        Move-Item -LiteralPath $src -Destination $dst -Force -ErrorAction Stop
-                        return
-                    } catch {
-                        $lastError = $_.Exception.Message
-                        Start-Sleep -Milliseconds 1000
-                    }
-                }
-                throw "Move failed after retry: $src -> $dst ; $lastError"
-            }
+            $runtimeDir = "{RUNTIME_DIR}"
+            $stateFile  = "{STATE_FILE}"
+            $logFile    = "{LOG_FILE}"
+        """).replace("__APP__", self.app_name)
+        ps1_content += generate_common_base_functions_ps1()
+        ps1_content += generate_sha256_function_ps1()
+        ps1_content += generate_common_state_functions_ps1()
+        ps1_content += generate_move_with_retry_ps1()
+        ps1_content += textwrap.dedent(r"""
 
             try {
                 Set-UpdateStatus "replacing" "read_state" "读取更新状态文件" 35 "INFO"
@@ -985,7 +674,7 @@ class SelfUpdater:
 
                 if ($newSha256) {
                     Set-UpdateStatus "replacing" "verify_new_file_hash" "校验新版本文件 SHA256" 45 "INFO"
-                    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $newFile).Hash.ToLowerInvariant()
+                    $actual = Get-SHA256 $newFile
                     if ($actual -ne $newSha256.ToLowerInvariant()) {
                         throw "new file SHA256 mismatch: expected $newSha256, got $actual"
                     }
@@ -1013,10 +702,18 @@ class SelfUpdater:
             }
         """).lstrip("\n")
 
-        script_path = script_dir / f"{self.app_name}_Update.ps1"
-        script_path.write_text(ps1_content, encoding='utf-8-sig')
+        ps1_content = ps1_content.replace('{RUNTIME_DIR}', self._ps_quote(paths['runtime_dir']))
+        ps1_content = ps1_content.replace('{STATE_FILE}', self._ps_quote(paths['state_file']))
+        ps1_content = ps1_content.replace('{LOG_FILE}', self._ps_quote(paths['log_file']))
+
+        paths['update_ps1'].write_text(ps1_content, encoding='utf-8-sig')
 
     # ── 静态工具方法 ──
+
+    @staticmethod
+    def _ps_quote(path: Path) -> str:
+        """将路径转换为 PowerShell 双引号字符串内容。"""
+        return str(path).replace('`', '``').replace('$', '`$').replace('"', '`"')
 
     @staticmethod
     def self_update_verify(expected_sha256: str = "",
@@ -1078,10 +775,13 @@ class SelfUpdater:
         清理自更新缓存目录 UpdateCache
 
         Args:
-            temp_folder: 临时文件夹路径
+            temp_folder: 自更新根目录；为空时回退到程序目录下的 SelfUpdate
             logger: 日志记录器
         """
-        cache_dir = Path(temp_folder) / "UpdateCache"
+        if temp_folder:
+            cache_dir = Path(temp_folder) / "UpdateCache"
+        else:
+            cache_dir = get_exe_path().parent / "SelfUpdate" / "UpdateCache"
         if cache_dir.exists():
             try:
                 shutil.rmtree(cache_dir)
@@ -1094,15 +794,11 @@ class SelfUpdater:
                              logger: logging.Logger,
                              new_file: str = "",
                              backup_file: str = "") -> None:
-        """清理更新产生的 PS1 脚本、二进制残留、锁文件和更新日志
-
-        Args:
-            exe_dir: exe 所在目录
-            app_name: 应用名称
-            logger: 日志记录器
-            new_file: .new.exe 暂存路径（从状态文件读取）
-            backup_file: .backup.exe 路径（从状态文件读取）
-        """
+        """[已废弃] 清理更新产生的文件 — 请改用 _cleanup_update_residue()"""
+        import warnings
+        warnings.warn(
+            "clean_update_scripts 已废弃，请改用 SelfUpdater._cleanup_update_residue()",
+            DeprecationWarning, stacklevel=2)
         base = Path(exe_dir)
         files = [
             base / f"{app_name}_Update_Helper.ps1",
@@ -1122,6 +818,90 @@ class SelfUpdater:
                     logger.debug(f"已清理: {fp}")
             except OSError:
                 pass
+
+    @staticmethod
+    def _cleanup_update_residue(logger: logging.Logger) -> None:
+        """按状态文件记录的路径清理更新运行时文件残留。
+
+        仅当状态为 verified 或 rollback_done 等终端状态时才执行清理：
+        1. 从状态文件读取运行时路径（helper_ps1 / update_ps1 / lock_file
+           / new_file / backup_file）并逐个删除
+        2. 尝试 rmdir runtime_dir（仅当目录为空时生效）
+        3. 清理 update.log
+        4. 删除状态文件
+
+        Args:
+            logger: 日志记录器
+        """
+        state = UpdateState.load()
+        if not state:
+            return
+
+        current_state = state.get("State", "state", fallback="idle")
+        if current_state not in ("verified", "rollback_done"):
+            return
+
+        logger.info(f"清理更新残留（状态: {current_state}）...")
+
+        # 从状态文件读取运行时路径并删除
+        runtime_keys = ("helper_ps1", "update_ps1", "lock_file", "new_file", "backup_file")
+        for key in runtime_keys:
+            file_path = state[key]
+            if file_path:
+                try:
+                    p = Path(file_path)
+                    if p.exists():
+                        p.unlink()
+                        logger.debug(f"已清理: {p}")
+                except OSError:
+                    pass
+
+        legacy_fields = (
+            state["helper_ps1"],
+            state["update_ps1"],
+            state["lock_file"],
+            state["runtime_dir"],
+        )
+        if not any(legacy_fields):
+            program_dir = state._file_path.parent
+            target_stem = Path(state["target"]).stem
+            if not target_stem:
+                target_stem = Path(sys.argv[0]).resolve().stem
+            legacy_files = (
+                program_dir / f"{target_stem}_Update_Helper.ps1",
+                program_dir / f"{target_stem}_Update.ps1",
+                program_dir / "update_started.lock",
+            )
+            for p in legacy_files:
+                try:
+                    if p.exists():
+                        p.unlink()
+                        logger.debug(f"已清理旧版更新残留: {p}")
+                except OSError:
+                    pass
+
+        # 尝试 rmdir runtime_dir（仅空目录可删除）
+        runtime_dir = state["runtime_dir"]
+        if runtime_dir:
+            try:
+                rtd = Path(runtime_dir)
+                if rtd.exists() and rtd.is_dir():
+                    rtd.rmdir()
+                    logger.debug(f"已清理运行时目录: {rtd}")
+            except OSError:
+                pass
+
+        # 清理 update.log（与状态文件同目录）
+        log_file = state._file_path.with_name('update.log')
+        try:
+            if log_file.exists():
+                log_file.unlink()
+                logger.debug(f"已清理更新日志: {log_file}")
+        except OSError:
+            pass
+
+        # 删除状态文件
+        state.delete()
 
     @staticmethod
     def rollback(logger: Optional[logging.Logger] = None) -> bool:

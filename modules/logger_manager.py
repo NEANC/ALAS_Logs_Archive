@@ -9,6 +9,8 @@ from typing import Optional
 
 
 # 日志格式常量
+# LOG_FORMAT 与 LOG_FILE_FORMAT 的格式字符串完全相同，差异仅在日期精度：
+# 控制台用 LOG_DATE_FORMAT（%H:%M:%S，只到秒），文件 datefmt 含年月日（见 setup_logger）
 LOG_FORMAT = "%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s"
 LOG_DATE_FORMAT = "%H:%M:%S"
 LOG_FILE_FORMAT = "%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s"
@@ -23,10 +25,6 @@ class ColoredConsoleFormatter(logging.Formatter):
         'ERROR': colorama.Fore.RED,
         'CRITICAL': colorama.Back.RED + colorama.Fore.BLACK + colorama.Style.BRIGHT,
     }
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        colorama.init(autoreset=True)
 
     def format(self, record: logging.LogRecord) -> str:
         color = self.LEVEL_COLORS.get(record.levelname, colorama.Fore.WHITE)

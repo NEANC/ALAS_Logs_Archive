@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import tempfile
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -18,7 +19,8 @@ from ALAS_Logs_Archive import (
     _resolve_config_path,
     _cleanup_update_residue,
     _handle_update_state,
-    get_temp_folder,
+    _build_updater,
+    get_self_update_root,
 )
 
 
@@ -258,19 +260,58 @@ class TestHelpers:
         assert path.endswith("config.ini")
         assert os.path.isabs(path) or os.path.exists(path) or "config.ini" in path
 
-    def test_get_temp_folder_returns_abs(self):
-        """get_temp_folder 返回绝对路径且包含 ALAS_Logs_Archive"""
-        folder = get_temp_folder()
-        assert "ALAS_Logs_Archive" in folder
-        assert "Cache" in folder
-        assert os.path.isabs(folder)
+    def test_get_self_update_root_returns_abs(self, monkeypatch, tmp_path):
+        """get_self_update_root 在 Windows 且 LOCALAPPDATA 存在时返回计划目录"""
+        if sys.platform != "win32":
+            folder = get_self_update_root()
+            assert "ALAS_Logs_Archive" in folder
+            assert "SelfUpdate" in folder
+            assert os.path.isabs(folder)
+            return
 
-    def test_get_temp_folder_windows_path(self):
-        """get_temp_folder 在 Windows 下使用 LOCALAPPDATA"""
+        local_appdata = tmp_path / "LocalAppData"
+        monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
+
+        assert Path(get_self_update_root()) == local_appdata / "ALAS_Logs_Archive" / "SelfUpdate"
+
+    def test_get_self_update_root_windows_returns_empty_without_localappdata(self, monkeypatch):
+        """Windows 且 LOCALAPPDATA 缺失时返回空字符串"""
+        if sys.platform != "win32":
+            pytest.skip("仅 Windows 环境验证 LOCALAPPDATA 缺失行为")
+
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        monkeypatch.setenv("TEMP", "C:\\Temp")
+
+        assert get_self_update_root() == ""
+
+    def test_get_self_update_root_windows_path(self):
+        """get_self_update_root 在 Windows 下使用 LOCALAPPDATA"""
         if sys.platform == "win32":
-            folder = get_temp_folder()
-            localappdata = os.environ.get("LOCALAPPDATA", os.environ.get("TEMP", ""))
-            assert folder.startswith(localappdata) or "ALAS_Logs_Archive" in folder
+            folder = get_self_update_root()
+            localappdata = os.environ.get("LOCALAPPDATA", "")
+            assert folder == "" or folder.startswith(localappdata)
+
+    def test_build_updater_falls_back_to_program_dir_without_localappdata(self, monkeypatch, tmp_path):
+        """_build_updater 在 LOCALAPPDATA 缺失时让 runtime_dir 回退到程序目录"""
+        if sys.platform != "win32":
+            pytest.skip("仅 Windows 环境验证 LOCALAPPDATA 缺失行为")
+
+        exe = tmp_path / "program" / "ALAS_Logs_Archive.exe"
+        exe.parent.mkdir()
+        exe.write_bytes(b"exe")
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        monkeypatch.setenv("TEMP", str(tmp_path / "Temp"))
+
+        updater = _build_updater(
+            logging.getLogger("test_build_updater_runtime_dir_fallback"),
+            mock.Mock(github_proxy="", self_update_channel="stable"),
+            True,
+            "Nuitka",
+        )
+        paths = updater._build_update_runtime_paths(exe, "v2.0.0")
+
+        assert updater.temp_folder == ""
+        assert paths["runtime_dir"] == exe.parent / "SelfUpdate" / "v2.0.0"
 
     @mock.patch("modules.self_updater.SelfUpdater.clean_update_cache")
     def test_cleanup_update_residue(self, mock_clean):
@@ -279,6 +320,27 @@ class TestHelpers:
         logger.setLevel(logging.DEBUG)
         _cleanup_update_residue(logger)
         mock_clean.assert_called_once()
+
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater._cleanup_update_residue")
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater.clean_update_cache")
+    def test_cleanup_update_residue_handles_verified_state(self, mock_clean, mock_residue, monkeypatch, tmp_path):
+        """_cleanup_update_residue 应通过状态处理链路清理 verified 残留。"""
+        from modules.config_self_updater import UpdateState
+
+        exe = tmp_path / "ALAS_Logs_Archive.exe"
+        exe.write_bytes(b"exe")
+        monkeypatch.setattr(sys, "argv", [str(exe)])
+
+        state = UpdateState()
+        state["state"] = "verified"
+        state.save()
+
+        _cleanup_update_residue(logging.getLogger("test_cleanup_verified_chain"))
+
+        mock_residue.assert_called_once()
+        mock_clean.assert_called()
+
+        state.delete()
 
     @mock.patch("modules.self_updater.SelfUpdater.rollback")
     @mock.patch("modules.self_updater.SelfUpdater.clean_update_cache")

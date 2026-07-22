@@ -5,6 +5,7 @@
 
 import configparser
 import logging
+from typing import Optional
 
 
 MIGRATION_MARKER = '__migrations__'
@@ -113,12 +114,12 @@ def _mark_applied(config: configparser.ConfigParser, migration_id: int) -> None:
 
 
 def apply_migrations(config: configparser.ConfigParser,
-                     logger: logging.Logger) -> bool:
+                     logger: Optional[logging.Logger]) -> bool:
     """在内存中应用所有待处理的迁移
 
     Args:
         config: ConfigParser 实例
-        logger: 日志记录器
+        logger: 日志记录器（可为 None）
 
     Returns:
         bool: 是否执行了迁移（调用方据此触发文件重建）
@@ -137,12 +138,15 @@ def apply_migrations(config: configparser.ConfigParser,
             if not handler(config, **kwargs):
                 continue
             desc = migration.get('description', f'#{mid}')
-            logger.info(f"检测到需要迁移 [{mid}]: {desc}")
+            if logger:
+                logger.info(f"检测到需要迁移 [{mid}]: {desc}")
             _mark_applied(config, mid)
             applied.add(mid)
             changed = True
-            logger.info(f"配置迁移 [{mid}] 完成")
+            if logger:
+                logger.info(f"配置迁移 [{mid}] 完成")
         except Exception as e:
-            logger.warning(f"配置迁移 [{mid}] 失败: {e}")
+            if logger:
+                logger.warning(f"配置迁移 [{mid}] 失败: {e}")
 
     return changed

@@ -70,15 +70,20 @@ def _space_saving(compressed: int, original: int) -> float:
     return (1 - compressed / original) * 100 if original > 0 else 0.0
 
 
-def read_file_chunked(file_path: str, chunk_size: int) -> bytes:
-    """分块读取文件内容
+def read_file_fully(file_path: str, chunk_size: int) -> bytes:
+    """一次性将整个文件读入内存并返回完整字节内容
+
+    内部按 chunk_size 分批读取以避免单次 read 的瞬时峰值，但最终会拼接
+    成完整 bytes 返回（拼接瞬间 chunks 列表与结果并存，峰值内存与文件
+    大小同量级）。仅用于小文件（compress_file 已限制 ≤256MB），不适合
+    大文件流式处理。
 
     Args:
         file_path: 文件路径
-        chunk_size: 块大小
+        chunk_size: 每次读取的块大小
 
     Returns:
-        bytes: 文件内容
+        bytes: 文件的完整内容
     """
     chunks = []
     with open(file_path, "rb") as f:
@@ -103,7 +108,7 @@ def compress_file(file_path: str, compression_algorithm: str, compression_level:
         Tuple[str, bytes, int, float]: (文件名, 压缩后的数据, 原始大小, 耗时秒)
     """
     t0 = time.time()
-    data = read_file_chunked(file_path, chunk_size)
+    data = read_file_fully(file_path, chunk_size)
     original_size = len(data)
 
     algo = compression_algorithm.lower()
@@ -512,7 +517,7 @@ def create_archive(files: List[str], archive_folder: str, archive_name_format: s
             archive_filename = f"{name_without_ext}_{counter}.{ext}"
             archive_path = os.path.join(archive_folder, archive_filename)
 
-        if counter > 1:
+        if counter > 0:
             logger.info(f"检测到已有归档文件，将创建: {archive_filename}")
         else:
             logger.info(f"创建新归档文件: {archive_filename}")

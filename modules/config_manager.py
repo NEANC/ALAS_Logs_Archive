@@ -105,7 +105,7 @@ class ConfigManager:
         self.archive_name_format = '存档'
         self.compression_algorithm = 'zstd'
         self.compression_level = 15
-        self.archive_mode = 'scroll'
+        self.archive_mode = 'incremental'
         self.max_workers = 1
         self.save_logs = True
         self.log_folder = 'logs'
@@ -345,7 +345,7 @@ class ConfigManager:
         self.archive_name_format = self._get_str('zip', 'archive_name_format', '存档')
         self.compression_algorithm = self._get_str('zip', 'compression_algorithm', 'zstd').lower()
         self.compression_level = self._get_int('zip', 'compression_level', 15)
-        self.archive_mode = self._get_str('zip', 'archive_mode', 'scroll').lower()
+        self.archive_mode = self._get_str('zip', 'archive_mode', 'incremental').lower()
         self.max_workers = self._get_int('zip', 'max_workers', 1)
 
         # [log]
