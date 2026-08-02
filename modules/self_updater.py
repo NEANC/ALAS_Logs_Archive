@@ -638,9 +638,17 @@ class SelfUpdater:
                     Restore-Backup "verify failed: exit $verifyCode"
                 }
 
-                Set-UpdateStatus "verified" "start_normal_app" "新版验证通过，启动主程序" 100 "INFO"
-                Commit-Update
-                Start-NormalAppVisible $target
+                if (-not (Commit-Update)) {
+                    Write-Log "ERROR" "update commit failed"
+                    exit 1
+                }
+
+                Set-UpdateStatus "" "start_cleanup" "新版验证通过，启动清理模式" 100 "INFO"
+                try {
+                    Start-CleanupAppVisible $target @('--self-update-cleanup', '--self-update-parent-pid', "$PID")
+                } catch {
+                    Write-Log "ERROR" "cleanup start failed: $($_.Exception.Message)"
+                }
                 exit 0
             } catch {
                 Write-Log "ERROR" "helper error: $($_.Exception.Message)"

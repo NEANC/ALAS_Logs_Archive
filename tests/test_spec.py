@@ -100,9 +100,11 @@ def test_ps1_fragments_generate_helper_only_function_groups():
     assert 'function Get-RetryOrDefault' in retry
     assert 'function Remove-WithRetry' in cleanup
     assert 'function Commit-Update' in lifecycle
+    assert 'function Confirm-UpdateCommitted' in lifecycle
     assert 'function Restore-Backup' in lifecycle
     assert 'function Start-ProcWait' in lifecycle
     assert 'function Start-NormalAppVisible' in lifecycle
+    assert 'function Start-CleanupAppVisible' in lifecycle
 
 
 # ── 任务 4 测试 ──
@@ -466,6 +468,45 @@ def test_generated_update_scripts_use_injected_absolute_paths(tmp_path):
     # 不应再从 $scriptDir 推导状态文件路径
     assert '$stateFile = Join-Path $scriptDir "update_state.ini"' not in helper_text
     assert '$stateFile = Join-Path $scriptDir "update_state.ini"' not in update_text
+
+
+# ── 任务 9 测试 ──
+
+def test_helper_success_path_commits_then_starts_cleanup(tmp_path):
+    """Helper 应确认提交后携带自身 PID 异步启动 cleanup。"""
+    from modules.self_updater import SelfUpdater
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        temp_folder=str(tmp_path / 'self-update-root'),
+        logger=logging.getLogger('test_helper_commit_cleanup'),
+    )
+    paths = updater._build_update_runtime_paths(
+        tmp_path / 'ALAS_Logs_Archive.exe', 'v2.0.0'
+    )
+    paths['runtime_dir'].mkdir(parents=True)
+    updater._generate_helper_ps1(paths)
+    content = paths['helper_ps1'].read_text(encoding='utf-8-sig')
+
+    assert content.index('Commit-Update') < content.index('Confirm-UpdateCommitted')
+    assert '--self-update-cleanup' in content
+    assert '--self-update-parent-pid' in content
+    assert '"$PID"' in content
+    assert 'Start-CleanupAppVisible' in content
+    # 成功路径不再直接普通启动主程序（Start-NormalAppVisible 仅保留在回滚分支）
+    assert 'Start-NormalAppVisible $target\n' not in content
+
+    # 提交后的 cleanup 启动阶段异常不流入回滚：cleanup 启动与 exit 0 之间没有 Restore-Backup
+    cleanup_start = content.index('Start-CleanupAppVisible $target')
+    commit_exit = content.index('exit 0', cleanup_start)
+    cleanup_stage = content[cleanup_start:commit_exit]
+    assert 'Restore-Backup' not in cleanup_stage
+    # 该阶段由独立 try/catch 保护（catch 出现在 exit 0 之前）
+    assert content.index('catch {', cleanup_start) < commit_exit
 
 
 def test_replace_executable_writes_runtime_paths_to_state(monkeypatch, tmp_path):

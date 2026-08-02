@@ -139,8 +139,10 @@ def generate_common_state_functions_ps1() -> str:
                 $tmp = "$stateFile.tmp"
                 [System.IO.File]::WriteAllLines($tmp, [string[]]$out.ToArray())
                 Move-Item -LiteralPath $tmp -Destination $stateFile -Force
+                return $true
             } catch {
                 Write-Log "ERROR" "Write-IniValue failed: $($_.Exception.Message)"
+                return $false
             }
         }
 
@@ -234,21 +236,23 @@ def generate_helper_lifecycle_functions_ps1() -> str:
     """生成 Helper.ps1 独有的提交、回滚和进程启动函数。"""
     return textwrap.dedent(r'''
         function Commit-Update {
-            try {
-                $backup = Read-IniValue "Files" "backup_file"
-                Write-IniValue "Retry" "retry_count" "0"
-                Write-IniValue "State" "last_error" ""
-                Write-IniValue "State" "state" "verified"
-                if ($backup -and (Test-Path -LiteralPath $backup)) {
-                    Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
-                }
-                if (Test-Path -LiteralPath $lockFile) {
-                    Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue
-                }
-                Write-Log "INFO" "update committed"
-            } catch {
-                Write-Log "WARN" "Commit-Update failed: $($_.Exception.Message)"
+            if (-not (Write-IniValue "Retry" "retry_count" "0")) { return $false }
+            if (-not (Write-IniValue "State" "last_error" "")) { return $false }
+            if (-not (Write-IniValue "State" "state" "verified")) { return $false }
+
+            $backup = Read-IniValue "Files" "backup_file"
+            if ($backup -and (Test-Path -LiteralPath $backup)) {
+                Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
             }
+            if (Test-Path -LiteralPath $lockFile) {
+                Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue
+            }
+            Write-Log "INFO" "update committed"
+            return ((Read-IniValue "State" "state") -eq "verified")
+        }
+
+        function Confirm-UpdateCommitted {
+            return ((Read-IniValue "State" "state") -eq "verified")
         }
 
         function Restore-Backup($reason) {
@@ -325,7 +329,7 @@ def generate_helper_lifecycle_functions_ps1() -> str:
             return -1
         }
 
-        function Start-NormalAppVisible($filePath, [string[]]$argList = @()) {
+        function Start-AppVisibleWithReset($filePath, [string[]]$argList = @()) {
             $workDir = Split-Path -Parent $filePath
 
             $oldReset = [Environment]::GetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT", "Process")
@@ -362,5 +366,13 @@ def generate_helper_lifecycle_functions_ps1() -> str:
                     [Environment]::SetEnvironmentVariable($k, $oldPyi[$k], "Process")
                 }
             }
+        }
+
+        function Start-NormalAppVisible($filePath, [string[]]$argList = @()) {
+            Start-AppVisibleWithReset $filePath $argList
+        }
+
+        function Start-CleanupAppVisible($filePath, [string[]]$argList = @()) {
+            Start-AppVisibleWithReset $filePath $argList
         }
     ''')
