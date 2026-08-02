@@ -834,3 +834,43 @@ def test_clean_update_cache_reports_failed_path(monkeypatch, tmp_path):
     assert result.success is False
     assert str(cache_dir) in result.failed_paths
     assert result.cache_deleted is False
+
+
+def test_cleanup_update_residue_keeps_state_when_file_delete_fails(
+        monkeypatch, tmp_path):
+    """运行时文件删除失败时应保留 verified 状态和精确路径。"""
+    from modules.config_self_updater import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / "program"
+    runtime_dir = tmp_path / "SelfUpdate" / "v2.0.0"
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+    target = program_dir / "ALAS_Logs_Archive.exe"
+    helper = runtime_dir / "ALAS_Logs_Archive_Update_Helper.ps1"
+    target.write_bytes(b"exe")
+    helper.write_text("helper", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", [str(target)])
+
+    state = UpdateState()
+    state["state"] = "verified"
+    state["target"] = str(target)
+    state["runtime_dir"] = str(runtime_dir)
+    state["helper_ps1"] = str(helper)
+    state.save()
+
+    original_unlink = Path.unlink
+
+    def fail_helper(path, *args, **kwargs):
+        if path == helper:
+            raise OSError("locked")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_helper)
+    result = SelfUpdater._cleanup_update_residue(logging.getLogger("test"))
+
+    assert result.success is False
+    assert str(helper) in result.failed_paths
+    assert helper.exists()
+    assert (program_dir / "update_state.ini").exists()
+    assert UpdateState.load()["helper_ps1"] == str(helper)

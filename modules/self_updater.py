@@ -874,7 +874,8 @@ class SelfUpdater:
            / new_file / backup_file）并逐个删除
         2. 尝试 rmdir runtime_dir（仅当目录为空时生效）
         3. 清理 update.log
-        4. 删除状态文件
+        4. 仅在无失败对象时删除状态文件，否则保留（含精确路径）
+           供下次清理
 
         Args:
             logger: 日志记录器
@@ -893,18 +894,23 @@ class SelfUpdater:
 
         logger.info(f"清理更新残留（状态: {current_state}）...")
 
+        def _try_unlink(path: Path, log_prefix: str) -> None:
+            """尝试删除单个文件并逐项记录成功/失败。"""
+            try:
+                if path.exists():
+                    path.unlink()
+                    logger.debug(f"{log_prefix}: {path}")
+                    result.cleaned_paths.append(str(path))
+            except OSError as e:
+                logger.warning(f"清理失败: {path}（{e}）")
+                result.failed_paths.append(str(path))
+
         # 从状态文件读取运行时路径并删除
         runtime_keys = ("helper_ps1", "update_ps1", "lock_file", "new_file", "backup_file")
         for key in runtime_keys:
             file_path = state[key]
             if file_path:
-                try:
-                    p = Path(file_path)
-                    if p.exists():
-                        p.unlink()
-                        logger.debug(f"已清理: {p}")
-                except OSError:
-                    pass
+                _try_unlink(Path(file_path), "已清理")
 
         legacy_fields = (
             state["helper_ps1"],
@@ -923,35 +929,30 @@ class SelfUpdater:
                 program_dir / "update_started.lock",
             )
             for p in legacy_files:
-                try:
-                    if p.exists():
-                        p.unlink()
-                        logger.debug(f"已清理旧版更新残留: {p}")
-                except OSError:
-                    pass
+                _try_unlink(p, "已清理旧版更新残留")
 
         # 尝试 rmdir runtime_dir（仅空目录可删除）
         runtime_dir = state["runtime_dir"]
         if runtime_dir:
+            rtd = Path(runtime_dir)
             try:
-                rtd = Path(runtime_dir)
                 if rtd.exists() and rtd.is_dir():
                     rtd.rmdir()
                     logger.debug(f"已清理运行时目录: {rtd}")
-            except OSError:
-                pass
+                    result.cleaned_paths.append(str(rtd))
+            except OSError as e:
+                logger.warning(f"清理运行时目录失败: {rtd}（{e}）")
+                result.failed_paths.append(str(rtd))
 
         # 清理 update.log（与状态文件同目录）
-        log_file = state._file_path.with_name('update.log')
-        try:
-            if log_file.exists():
-                log_file.unlink()
-                logger.debug(f"已清理更新日志: {log_file}")
-        except OSError:
-            pass
+        _try_unlink(state._file_path.with_name('update.log'), "已清理更新日志")
 
-        # 删除状态文件
-        state.delete()
+        # 仅当无失败对象时才删除状态文件，否则保留精确路径供下次清理
+        if not result.failed_paths:
+            state.delete()
+            result.state_deleted = True
+        else:
+            logger.warning("存在未清理的更新残留，保留状态文件供下次清理")
         return result
 
     @staticmethod
