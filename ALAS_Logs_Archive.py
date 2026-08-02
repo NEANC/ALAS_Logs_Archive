@@ -2,10 +2,12 @@
 # -_- coding: utf-8 -_-
 
 import argparse
+import ctypes
 import logging
 import os
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from functools import partial
@@ -110,6 +112,8 @@ def parse_command_line_args() -> argparse.Namespace:
     parser.add_argument("--expected-version", type=str, default="", help=argparse.SUPPRESS)
     parser.add_argument("--retry-update", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--update-failed", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--self-update-cleanup", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--self-update-parent-pid", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("zipfile", nargs="?", default=None, help=argparse.SUPPRESS)
     return parser.parse_args()
 
@@ -139,27 +143,75 @@ def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = Fal
 
 
 def _handle_update_state(logger: logging.Logger) -> None:
-    """检查并处理中断的更新状态（回滚、验证、清除失效记录）"""
+    """检查并处理中断的更新状态（回滚、清除失效记录）"""
     state = UpdateState.load()
     if not state:
         return
 
     current_state = state.get("State", "state", fallback="idle")
-    if current_state == "verified":
-        logger.info("上次更新已成功完成")
-        SelfUpdater.clean_update_cache(get_self_update_root(), logger)
-        SelfUpdater._cleanup_update_residue(logger)
-    elif current_state == "rollback_done":
-        logger.warning("上次更新已回滚")
-        SelfUpdater._cleanup_update_residue(logger)
-    elif current_state == "failed_disabled":
+    if current_state == "failed_disabled":
         failed_ver = state["new_version"]
         logger.warning(f"版本 {failed_ver} 此前更新失败，已禁用自动更新。")
     elif current_state in ("downloaded_verified", "helper_started", "replacing",
                             "pending_new_verify", "rollback"):
         logger.warning(f"检测到未完成的更新（状态: {current_state}），尝试回滚...")
         SelfUpdater.rollback(logger)
-        SelfUpdater.clean_update_cache(get_self_update_root(), logger)
+
+
+def _is_process_running(process_id: int) -> bool:
+    """使用 Windows 进程句柄判断指定进程是否仍在运行。
+
+    Args:
+        process_id: 目标进程 PID
+
+    Returns:
+        进程仍在运行返回 True；进程不存在或已退出返回 False
+    """
+    if process_id <= 0:
+        return False
+    if sys.platform != "win32":
+        # 自更新仅支持 Windows，非 Windows 平台一律视为进程不存在
+        return False
+
+    synchronize = 0x00100000
+    wait_timeout = 0x00000102
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    handle = kernel32.OpenProcess(synchronize, False, process_id)
+    if not handle:
+        return False
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def wait_for_process_exit(
+        parent_pid: int,
+        logger: logging.Logger,
+        timeout_seconds: float = 30.0,
+        poll_interval: float = 0.1) -> bool:
+    """等待 Helper 进程退出，超时后记录警告并返回 False。
+
+    Args:
+        parent_pid: Helper 进程 PID
+        logger: 日志记录器
+        timeout_seconds: 最长等待秒数
+        poll_interval: 轮询间隔秒数
+
+    Returns:
+        进程已退出或无需等待返回 True；超时返回 False
+    """
+    if parent_pid <= 0:
+        return True
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if not _is_process_running(parent_pid):
+            return True
+        time.sleep(poll_interval)
+
+    logger.warning(f"等待更新 Helper 退出超时，PID: {parent_pid}")
+    return False
 
 
 def get_self_update_root() -> str:
@@ -197,9 +249,9 @@ def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
 
 
 def _cleanup_update_residue(logger: logging.Logger) -> None:
-    """清理上次更新残留（状态文件 + 缓存）"""
+    """处理更新状态并执行完整自更新清理。"""
     _handle_update_state(logger)
-    SelfUpdater.clean_update_cache(get_self_update_root(), logger)
+    SelfUpdater.cleanup_self_update(get_self_update_root(), logger)
 
 
 def _resolve_config_path() -> str:
@@ -219,8 +271,22 @@ def main():
         exit_code = SelfUpdater.self_update_verify(
             expected_sha256=args.expected_sha256,
             expected_version=args.expected_version,
+            version_func=lambda: VERSION,
         )
         sys.exit(exit_code)
+
+    # ── 自更新清理模式（PS1 Helper 替换完成后调用） ──
+    if args.self_update_cleanup:
+        print_info()
+        logger = setup_logger("logs", 15, logging.INFO, save_logs=False)
+        logger.info("正在清理上次自更新残留...")
+        wait_for_process_exit(args.self_update_parent_pid, logger)
+        result = SelfUpdater.cleanup_self_update(get_self_update_root(), logger)
+        if result.success:
+            print("更新已完成，临时文件已清理。")
+        else:
+            print("更新已完成，部分临时文件将在下次启动时继续清理。")
+        sys.exit(0)
 
     # ── 重试更新模式（PS1 回滚后 retry_count < max） ──
     if args.retry_update:

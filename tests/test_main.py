@@ -13,8 +13,10 @@ from unittest import mock
 
 import pytest
 
+from modules.version import VERSION
 from ALAS_Logs_Archive import (
     get_files_to_archive,
+    main,
     parse_command_line_args,
     _resolve_config_path,
     _cleanup_update_residue,
@@ -144,8 +146,23 @@ class TestSelfUpdateInternalArgs:
             assert args.expected_version == ""
             assert args.retry_update is False
             assert args.update_failed is False
+            assert args.self_update_cleanup is False
+            assert args.self_update_parent_pid == 0
         finally:
             sys.argv = old_argv
+
+    def test_cleanup_internal_args(self):
+        """cleanup 内部参数应正确解析。"""
+        with mock.patch.object(
+                sys,
+                "argv",
+                ["ALAS_Logs_Archive.py", "--self-update-cleanup",
+                 "--self-update-parent-pid", "321"],
+        ):
+            args = parse_command_line_args()
+
+        assert args.self_update_cleanup is True
+        assert args.self_update_parent_pid == 321
 
     def test_internal_args_hidden_from_help(self):
         """--help 不暴露内部参数"""
@@ -223,9 +240,21 @@ class TestSelfUpdateE2E:
         result = self._run_subprocess(
             "--self-update-verify",
             "--expected-sha256", actual,
-            "--expected-version", "x.y.z",
+            "--expected-version", VERSION,
         )
         assert result.returncode == 0
+
+    def test_verify_mode_version_mismatch(self):
+        """--self-update-verify 版本不匹配时退出码为 3"""
+        import hashlib
+        content = open("ALAS_Logs_Archive.py", "rb").read()
+        actual = hashlib.sha256(content).hexdigest()
+        result = self._run_subprocess(
+            "--self-update-verify",
+            "--expected-sha256", actual,
+            "--expected-version", "0.0.0-mismatch",
+        )
+        assert result.returncode == 3
 
     def test_update_failed_without_state(self):
         """--update-failed 无状态文件时退出码为 1 并提示无法读取"""
@@ -249,6 +278,30 @@ class TestSelfUpdateE2E:
         result = self._run_subprocess("--retry-update")
         # 源码模式下 SelfUpdater 打印警告后退出 1
         assert result.returncode in (0, 1)
+
+
+@mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+@mock.patch("ALAS_Logs_Archive.wait_for_process_exit")
+@mock.patch("ALAS_Logs_Archive.setup_logger")
+@mock.patch("ALAS_Logs_Archive.print_info")
+def test_cleanup_mode_waits_then_cleans_and_exits(
+        mock_info, mock_logger, mock_wait, mock_cleanup, monkeypatch):
+    """cleanup 模式应显示界面、等待 Helper、清理并直接退出。"""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ALAS_Logs_Archive.py", "--self-update-cleanup",
+         "--self-update-parent-pid", "321"],
+    )
+    mock_cleanup.return_value.success = True
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+    mock_info.assert_called_once()
+    mock_wait.assert_called_once_with(321, mock_logger.return_value)
+    mock_cleanup.assert_called_once()
 
 
 class TestHelpers:
@@ -367,6 +420,7 @@ class TestHelpers:
         try:
             _handle_update_state(logger)
             mock_rollback.assert_called_once()
-            mock_clean.assert_called_once()
+            # 清理统一由 _cleanup_update_residue 包装函数处理，此处不直接调用
+            mock_clean.assert_not_called()
         finally:
             state.delete()
