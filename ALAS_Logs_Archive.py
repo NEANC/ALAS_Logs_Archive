@@ -143,7 +143,7 @@ def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = Fal
 
 
 def _handle_update_state(logger: logging.Logger) -> None:
-    """检查并处理中断的更新状态（回滚、清除失效记录）"""
+    """检查并处理中断的更新状态（非终态先回滚，终态清理由协调入口统一处理）"""
     state = UpdateState.load()
     if not state:
         return
@@ -176,6 +176,12 @@ def _is_process_running(process_id: int) -> bool:
     synchronize = 0x00100000
     wait_timeout = 0x00000102
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # 显式声明签名，避免 64 位 HANDLE 被默认 c_int 截断导致误判进程不存在
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+    kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
     handle = kernel32.OpenProcess(synchronize, False, process_id)
     if not handle:
         return False
@@ -280,9 +286,14 @@ def main():
         print_info()
         logger = setup_logger("logs", 15, logging.INFO, save_logs=False)
         logger.info("正在清理上次自更新残留...")
+        # 等待 Helper 退出；超时仍继续尽力清理，失败路径由状态文件保留供下次启动兜底
         wait_for_process_exit(args.self_update_parent_pid, logger)
-        result = SelfUpdater.cleanup_self_update(get_self_update_root(), logger)
-        if result.success:
+        try:
+            result = SelfUpdater.cleanup_self_update(get_self_update_root(), logger)
+        except Exception as e:
+            logger.error(f"自更新清理异常: {e}")
+            result = None
+        if result is not None and result.success:
             print("更新已完成，临时文件已清理。")
         else:
             print("更新已完成，部分临时文件将在下次启动时继续清理。")

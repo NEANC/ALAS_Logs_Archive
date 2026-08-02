@@ -13,17 +13,19 @@ from unittest import mock
 
 import pytest
 
-from modules.version import VERSION
 from ALAS_Logs_Archive import (
     get_files_to_archive,
     main,
     parse_command_line_args,
+    wait_for_process_exit,
     _resolve_config_path,
     _cleanup_update_residue,
     _handle_update_state,
+    _is_process_running,
     _build_updater,
     get_self_update_root,
 )
+from modules.version import VERSION
 
 
 class TestGetFilesToArchive:
@@ -304,6 +306,29 @@ def test_cleanup_mode_waits_then_cleans_and_exits(
     mock_cleanup.assert_called_once()
 
 
+@mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+@mock.patch("ALAS_Logs_Archive.wait_for_process_exit")
+@mock.patch("ALAS_Logs_Archive.setup_logger")
+@mock.patch("ALAS_Logs_Archive.print_info")
+def test_cleanup_mode_reports_partial_failure(
+        mock_info, mock_logger, mock_wait, mock_cleanup, monkeypatch, capsys):
+    """cleanup 部分失败时仍以 0 退出并提示下次启动继续清理。"""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ALAS_Logs_Archive.py", "--self-update-cleanup",
+         "--self-update-parent-pid", "321"],
+    )
+    mock_cleanup.return_value.success = False
+    mock_cleanup.return_value.failed_paths = ["C:/x/helper.ps1"]
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+    assert "部分临时文件将在下次启动时继续清理" in capsys.readouterr().out
+
+
 class TestHelpers:
     """辅助函数测试"""
 
@@ -424,3 +449,27 @@ class TestHelpers:
             mock_clean.assert_not_called()
         finally:
             state.delete()
+
+
+class TestProcessExit:
+    """进程状态判断与等待函数测试"""
+
+    def test_is_process_running_non_positive(self):
+        """进程号非正数时直接判定为不在运行。"""
+        assert _is_process_running(0) is False
+        assert _is_process_running(-1) is False
+
+    def test_is_process_running_non_windows(self, monkeypatch):
+        """非 Windows 平台下直接返回 False 且不触发 ctypes。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert _is_process_running(1234) is False
+
+    def test_wait_for_process_exit_non_positive(self, caplog):
+        """非正进程号直接返回 True 且不等待。"""
+        assert wait_for_process_exit(0, logging.getLogger("test")) is True
+
+    def test_wait_for_process_exit_timeout(self, monkeypatch):
+        """Helper 一直未退出时等待超时返回 False。"""
+        monkeypatch.setattr("ALAS_Logs_Archive._is_process_running", lambda pid: True)
+        assert wait_for_process_exit(
+            1234, logging.getLogger("test"), timeout_seconds=0.05, poll_interval=0.01) is False
