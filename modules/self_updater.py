@@ -25,6 +25,8 @@ import textwrap
 import time
 import requests
 
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -55,6 +57,30 @@ def _get_existing_retry_count() -> str:
     if existing:
         return existing.get("Retry", "retry_count", fallback="0")
     return "0"
+
+
+@dataclass
+class CleanupResult:
+    """记录一次自更新清理的完整结果。"""
+
+    cleaned_paths: List[str] = field(default_factory=list)
+    failed_paths: List[str] = field(default_factory=list)
+    state_deleted: bool = False
+    cache_deleted: bool = False
+    root_deleted: bool = False
+
+    @property
+    def success(self) -> bool:
+        """返回本次清理是否不存在失败对象。"""
+        return not self.failed_paths
+
+    def merge(self, other: "CleanupResult") -> None:
+        """合并另一个清理步骤的结果。"""
+        self.cleaned_paths.extend(other.cleaned_paths)
+        self.failed_paths.extend(other.failed_paths)
+        self.state_deleted = self.state_deleted or other.state_deleted
+        self.cache_deleted = self.cache_deleted or other.cache_deleted
+        self.root_deleted = self.root_deleted or other.root_deleted
 
 
 class SelfUpdater:
@@ -770,14 +796,18 @@ class SelfUpdater:
         return 0
 
     @staticmethod
-    def clean_update_cache(temp_folder: str, logger: logging.Logger) -> None:
+    def clean_update_cache(temp_folder: str, logger: logging.Logger) -> CleanupResult:
         """
         清理自更新缓存目录 UpdateCache
 
         Args:
             temp_folder: 自更新根目录；为空时回退到程序目录下的 SelfUpdate
             logger: 日志记录器
+
+        Returns:
+            清理结果
         """
+        result = CleanupResult()
         if temp_folder:
             cache_dir = Path(temp_folder) / "UpdateCache"
         else:
@@ -786,8 +816,11 @@ class SelfUpdater:
             try:
                 shutil.rmtree(cache_dir)
                 logger.info("已清理自更新缓存目录")
+                result.cleaned_paths.append(str(cache_dir))
+                result.cache_deleted = True
             except OSError as e:
                 logger.warning(f"清理自更新缓存目录失败: {e}")
+                result.failed_paths.append(str(cache_dir))
 
         parent_dir = cache_dir.parent
         if parent_dir.exists() and parent_dir.is_dir():
@@ -795,8 +828,12 @@ class SelfUpdater:
                 if not any(parent_dir.iterdir()):
                     parent_dir.rmdir()
                     logger.info(f"已清理空的自更新根目录: {parent_dir}")
+                    result.cleaned_paths.append(str(parent_dir))
+                    result.root_deleted = True
             except OSError as e:
                 logger.warning(f"清理空的自更新根目录失败: {e}")
+                result.failed_paths.append(str(parent_dir))
+        return result
 
     @staticmethod
     def clean_update_scripts(exe_dir: str, app_name: str,
@@ -829,7 +866,7 @@ class SelfUpdater:
                 pass
 
     @staticmethod
-    def _cleanup_update_residue(logger: logging.Logger) -> None:
+    def _cleanup_update_residue(logger: logging.Logger) -> CleanupResult:
         """按状态文件记录的路径清理更新运行时文件残留。
 
         仅当状态为 verified 或 rollback_done 等终端状态时才执行清理：
@@ -841,14 +878,18 @@ class SelfUpdater:
 
         Args:
             logger: 日志记录器
+
+        Returns:
+            清理结果
         """
+        result = CleanupResult()
         state = UpdateState.load()
         if not state:
-            return
+            return result
 
         current_state = state.get("State", "state", fallback="idle")
         if current_state not in ("verified", "rollback_done"):
-            return
+            return result
 
         logger.info(f"清理更新残留（状态: {current_state}）...")
 
@@ -911,6 +952,17 @@ class SelfUpdater:
 
         # 删除状态文件
         state.delete()
+        return result
+
+    @staticmethod
+    def cleanup_self_update(
+            self_update_root: str,
+            logger: logging.Logger) -> CleanupResult:
+        """按固定顺序执行并汇总完整的自更新清理。"""
+        result = CleanupResult()
+        result.merge(SelfUpdater._cleanup_update_residue(logger))
+        result.merge(SelfUpdater.clean_update_cache(self_update_root, logger))
+        return result
 
     @staticmethod
     def rollback(logger: Optional[logging.Logger] = None) -> bool:

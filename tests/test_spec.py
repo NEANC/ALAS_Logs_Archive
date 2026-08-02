@@ -785,3 +785,52 @@ def test_rollback_uses_backup_file_in_runtime_dir(monkeypatch, tmp_path):
     assert SelfUpdater.rollback(logging.getLogger('test_rollback_runtime')) is True
     assert target.read_bytes() == b'old'
     assert not backup.exists()
+
+
+# ── 任务 8 测试 ──
+
+def test_cleanup_self_update_runs_residue_before_cache(monkeypatch):
+    """完整清理应先处理运行时残留，再清理缓存。"""
+    from modules.self_updater import CleanupResult
+    from modules.self_updater import SelfUpdater
+
+    calls = []
+    residue_result = CleanupResult(cleaned_paths=["runtime"])
+    cache_result = CleanupResult(cleaned_paths=["cache"])
+
+    monkeypatch.setattr(
+        SelfUpdater,
+        "_cleanup_update_residue",
+        lambda logger: calls.append("residue") or residue_result,
+    )
+    monkeypatch.setattr(
+        SelfUpdater,
+        "clean_update_cache",
+        lambda root, logger: calls.append("cache") or cache_result,
+    )
+
+    result = SelfUpdater.cleanup_self_update("C:/SelfUpdate", logging.getLogger("test"))
+
+    assert calls == ["residue", "cache"]
+    assert result.success is True
+    assert result.cleaned_paths == ["runtime", "cache"]
+
+
+def test_clean_update_cache_reports_failed_path(monkeypatch, tmp_path):
+    """缓存删除失败时应返回失败路径。"""
+    from modules.self_updater import SelfUpdater
+
+    cache_dir = tmp_path / "SelfUpdate" / "UpdateCache"
+    cache_dir.mkdir(parents=True)
+    monkeypatch.setattr(
+        "modules.self_updater.shutil.rmtree",
+        mock.Mock(side_effect=OSError("locked")),
+    )
+
+    result = SelfUpdater.clean_update_cache(
+        str(cache_dir.parent), logging.getLogger("test")
+    )
+
+    assert result.success is False
+    assert str(cache_dir) in result.failed_paths
+    assert result.cache_deleted is False
