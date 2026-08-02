@@ -671,7 +671,8 @@ def test_cleanup_update_residue_does_not_use_legacy_layout_when_runtime_fields_p
         encoding='utf-8',
     )
 
-    SelfUpdater._cleanup_update_residue(logging.getLogger('test_cleanup_partial_runtime'))
+    result = SelfUpdater._cleanup_update_residue(
+        logging.getLogger('test_cleanup_partial_runtime'))
 
     assert legacy_helper.exists()
     assert legacy_update.exists()
@@ -679,6 +680,10 @@ def test_cleanup_update_residue_does_not_use_legacy_layout_when_runtime_fields_p
     assert not runtime_helper.exists()
     assert not runtime_update.exists()
     assert not state_file.exists()
+
+    assert result.success is True
+    assert not any('legacy' in p or p.endswith('_Update_Helper.ps1')
+                   for p in result.failed_paths)
 
 
 def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(monkeypatch, tmp_path):
@@ -874,3 +879,5 @@ def test_cleanup_update_residue_keeps_state_when_file_delete_fails(
     assert helper.exists()
     assert (program_dir / "update_state.ini").exists()
     assert UpdateState.load()["helper_ps1"] == str(helper)
+    assert str(runtime_dir) in result.failed_paths
+    assert result.state_deleted is False

@@ -895,10 +895,16 @@ class SelfUpdater:
         logger.info(f"清理更新残留（状态: {current_state}）...")
 
         def _try_unlink(path: Path, log_prefix: str) -> None:
-            """尝试删除单个文件并逐项记录成功/失败。"""
+            """尝试删除单个文件并逐项记录成功/失败。
+
+            使用 unlink(missing_ok=True) 直接删除，避免 exists() 前置
+            检查与 unlink() 之间的 TOCTOU 竞态导致 FileNotFoundError
+            误报；文件不存在视为已清理，不记录成功也不记录失败。
+            """
             try:
-                if path.exists():
-                    path.unlink()
+                existed = path.exists()
+                path.unlink(missing_ok=True)
+                if existed:
                     logger.debug(f"{log_prefix}: {path}")
                     result.cleaned_paths.append(str(path))
             except OSError as e:
