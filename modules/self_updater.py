@@ -789,6 +789,15 @@ class SelfUpdater:
             except OSError as e:
                 logger.warning(f"清理自更新缓存目录失败: {e}")
 
+        parent_dir = cache_dir.parent
+        if parent_dir.exists() and parent_dir.is_dir():
+            try:
+                if not any(parent_dir.iterdir()):
+                    parent_dir.rmdir()
+                    logger.info(f"已清理空的自更新根目录: {parent_dir}")
+            except OSError as e:
+                logger.warning(f"清理空的自更新根目录失败: {e}")
+
     @staticmethod
     def clean_update_scripts(exe_dir: str, app_name: str,
                              logger: logging.Logger,

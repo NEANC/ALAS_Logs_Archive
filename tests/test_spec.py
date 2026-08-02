@@ -325,13 +325,14 @@ def test_check_self_update_download_cache_falls_back_to_program_dir(monkeypatch,
 
 
 def test_clean_update_cache_empty_temp_folder_falls_back_to_program_dir(monkeypatch, tmp_path):
-    """空 temp_folder 清理程序目录 SelfUpdate 缓存，不清理相对 UpdateCache。"""
+    """空 temp_folder 清理程序目录 SelfUpdate 缓存，且在目录为空时删除 SelfUpdate。"""
     from modules.self_updater import SelfUpdater
 
     exe = tmp_path / 'program' / 'ALAS_Logs_Archive.exe'
     exe.parent.mkdir()
     exe.write_bytes(b'exe')
-    program_cache = exe.parent / 'SelfUpdate' / 'UpdateCache'
+    program_root = exe.parent / 'SelfUpdate'
+    program_cache = program_root / 'UpdateCache'
     relative_cwd = tmp_path / 'cwd'
     relative_cache = relative_cwd / 'UpdateCache'
     program_cache.mkdir(parents=True)
@@ -345,7 +346,31 @@ def test_clean_update_cache_empty_temp_folder_falls_back_to_program_dir(monkeypa
     SelfUpdater.clean_update_cache('', logging.getLogger('test_clean_cache_fallback'))
 
     assert not program_cache.exists()
+    assert not program_root.exists()
     assert relative_cache.exists()
+
+
+def test_clean_update_cache_keeps_non_empty_temp_folder(monkeypatch, tmp_path):
+    """SelfUpdate 目录中还有其他文件时，不应删除 temp_folder。"""
+    from modules.self_updater import SelfUpdater
+
+    exe = tmp_path / 'program' / 'ALAS_Logs_Archive.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'exe')
+    program_root = exe.parent / 'SelfUpdate'
+    program_cache = program_root / 'UpdateCache'
+    program_extra = program_root / 'keep.txt'
+    program_cache.mkdir(parents=True)
+    program_extra.write_text('keep me', encoding='utf-8')
+    (program_cache / 'cached.txt').write_text('program cache', encoding='utf-8')
+
+    monkeypatch.setattr('modules.self_updater.get_exe_path', lambda: exe)
+
+    SelfUpdater.clean_update_cache('', logging.getLogger('test_clean_cache_keep_root'))
+
+    assert not program_cache.exists()
+    assert program_root.exists()
+    assert program_extra.exists()
 
 
 def test_self_updater_ps_quote_escapes_powershell_special_chars(tmp_path):
