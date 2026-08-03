@@ -230,6 +230,7 @@ class TestSelfUpdateE2E:
         result = self._run_subprocess(
             "--self-update-verify",
             "--expected-sha256", "00" * 64,
+            "--expected-version", VERSION,
         )
         assert result.returncode == 2
         assert "SHA256" in (result.stdout + result.stderr)
@@ -257,6 +258,17 @@ class TestSelfUpdateE2E:
             "--expected-version", "0.0.0-mismatch",
         )
         assert result.returncode == 3
+
+    def test_verify_mode_missing_version_fails(self):
+        """--self-update-verify 缺少期望版本时退出码为 4（版本为必填）"""
+        import hashlib
+        content = open("ALAS_Logs_Archive.py", "rb").read()
+        actual = hashlib.sha256(content).hexdigest()
+        result = self._run_subprocess(
+            "--self-update-verify",
+            "--expected-sha256", actual,
+        )
+        assert result.returncode == 4
 
     def test_update_failed_without_state(self):
         """--update-failed 无状态文件时退出码为 1 并提示无法读取"""

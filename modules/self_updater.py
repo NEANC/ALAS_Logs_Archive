@@ -778,6 +778,14 @@ class SelfUpdater:
             logger.critical("未找到 SHA256，无法验证")
             return 1
 
+        if not expected_version:
+            logger.critical("未找到期望版本号，无法验证")
+            return 4
+
+        if not version_func:
+            logger.critical("缺少版本获取函数，无法验证版本")
+            return 4
+
         calc = sha256_calc or calculate_sha256
         current_exe = get_exe_path()
         actual_sha256 = calc(current_exe)
@@ -790,15 +798,14 @@ class SelfUpdater:
             )
             return 2
 
-        if expected_version and version_func:
-            actual_version = version_func()
-            if actual_version != expected_version:
-                logger.critical(
-                    f"版本号不匹配:\n"
-                    f"GitHub: {expected_version}\n"
-                    f"本地:   {actual_version}"
-                )
-                return 3
+        actual_version = version_func()
+        if actual_version != expected_version:
+            logger.critical(
+                f"版本号不匹配:\n"
+                f"GitHub: {expected_version}\n"
+                f"本地:   {actual_version}"
+            )
+            return 3
 
         logger.info("新版验证全部通过")
         return 0
