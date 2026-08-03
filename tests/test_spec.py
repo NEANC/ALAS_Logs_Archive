@@ -470,7 +470,7 @@ def test_generated_update_scripts_use_injected_absolute_paths(tmp_path):
     assert '$stateFile = Join-Path $scriptDir "update_state.ini"' not in update_text
 
 
-# ── 任务 9 测试 ──
+# ── Helper 提交边界与异步 cleanup 启动测试 ──
 
 def test_helper_success_path_commits_then_starts_cleanup(tmp_path):
     """Helper 应确认提交后携带自身 PID 异步启动 cleanup。"""
@@ -497,8 +497,16 @@ def test_helper_success_path_commits_then_starts_cleanup(tmp_path):
     assert '--self-update-parent-pid' in content
     assert '"$PID"' in content
     assert 'Start-CleanupAppVisible' in content
-    # 成功路径不再直接普通启动主程序（Start-NormalAppVisible 仅保留在回滚分支）
-    assert 'Start-NormalAppVisible $target\n' not in content
+    # 主流程真实调用 Commit-Update 并检查返回值
+    assert 'if (-not (Commit-Update))' in content
+    # 成功路径（Commit-Update 到 exit 0）不再直接普通启动主程序
+    # （Start-NormalAppVisible 仅保留在回滚分支）
+    success_start = content.index('if (-not (Commit-Update))')
+    success_exit = content.index('exit 0', success_start)
+    success_section = content[success_start:success_exit]
+    assert 'Start-NormalAppVisible' not in success_section
+    # verify 非 0 路径仍保留回滚兜底
+    assert 'Restore-Backup "verify failed' in content
 
     # 提交后的 cleanup 启动阶段异常不流入回滚：cleanup 启动与 exit 0 之间没有 Restore-Backup
     cleanup_start = content.index('Start-CleanupAppVisible $target')
@@ -833,7 +841,7 @@ def test_rollback_uses_backup_file_in_runtime_dir(monkeypatch, tmp_path):
     assert not backup.exists()
 
 
-# ── 任务 8 测试 ──
+# ── 完整清理协调与失败保留测试 ──
 
 def test_cleanup_self_update_runs_residue_before_cache(monkeypatch):
     """完整清理应先处理运行时残留，再清理缓存。"""

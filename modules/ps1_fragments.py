@@ -248,7 +248,7 @@ def generate_helper_lifecycle_functions_ps1() -> str:
                 Remove-Item -LiteralPath $lockFile -Force -ErrorAction SilentlyContinue
             }
             Write-Log "INFO" "update committed"
-            return ((Read-IniValue "State" "state") -eq "verified")
+            return (Confirm-UpdateCommitted)
         }
 
         function Confirm-UpdateCommitted {
