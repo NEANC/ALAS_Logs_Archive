@@ -254,8 +254,8 @@ def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
     )
 
 
-def _cleanup_update_residue(logger: logging.Logger) -> None:
-    """处理更新状态并执行完整自更新清理。"""
+def _run_startup_cleanup(logger: logging.Logger) -> None:
+    """处理更新状态（含失败状态提示与未完成更新回滚），随后执行完整自更新清理。"""
     _handle_update_state(logger)
     SelfUpdater.cleanup_self_update(get_self_update_root(), logger)
 
@@ -402,7 +402,7 @@ def main():
             sys.exit(0)
 
         # ── 正常启动：清理上次更新残留 ──
-        _cleanup_update_residue(logger)
+        _run_startup_cleanup(logger)
 
         target_folder = args.target if args.target else config_mgr.target_folder
         archive_folder = args.archive if args.archive else config_mgr.archive_folder

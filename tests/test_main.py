@@ -19,7 +19,7 @@ from ALAS_Logs_Archive import (
     parse_command_line_args,
     wait_for_process_exit,
     _resolve_config_path,
-    _cleanup_update_residue,
+    _run_startup_cleanup,
     _handle_update_state,
     _is_process_running,
     _build_updater,
@@ -329,6 +329,51 @@ def test_cleanup_mode_reports_partial_failure(
     assert "部分临时文件将在下次启动时继续清理" in capsys.readouterr().out
 
 
+@mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+@mock.patch("ALAS_Logs_Archive.wait_for_process_exit")
+@mock.patch("ALAS_Logs_Archive.setup_logger")
+@mock.patch("ALAS_Logs_Archive.print_info")
+def test_cleanup_mode_proceeds_after_wait_timeout(
+        mock_info, mock_logger, mock_wait, mock_cleanup, monkeypatch):
+    """等待 Helper 超时后仍执行清理并以 0 退出。"""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ALAS_Logs_Archive.py", "--self-update-cleanup",
+         "--self-update-parent-pid", "321"],
+    )
+    mock_wait.return_value = False
+    mock_cleanup.return_value.success = True
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+    mock_cleanup.assert_called_once()
+
+
+@mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+@mock.patch("ALAS_Logs_Archive.wait_for_process_exit")
+@mock.patch("ALAS_Logs_Archive.setup_logger")
+@mock.patch("ALAS_Logs_Archive.print_info")
+def test_cleanup_mode_cleans_after_exception(
+        mock_info, mock_logger, mock_wait, mock_cleanup, monkeypatch, capsys):
+    """清理抛异常时仍以 0 退出并提示下次启动继续清理。"""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["ALAS_Logs_Archive.py", "--self-update-cleanup",
+         "--self-update-parent-pid", "321"],
+    )
+    mock_cleanup.side_effect = RuntimeError("boom")
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code == 0
+    assert "部分临时文件将在下次启动时继续清理" in capsys.readouterr().out
+
+
 class TestHelpers:
     """辅助函数测试"""
 
@@ -392,17 +437,17 @@ class TestHelpers:
         assert paths["runtime_dir"] == exe.parent / "SelfUpdate" / "v2.0.0"
 
     @mock.patch("modules.self_updater.SelfUpdater.clean_update_cache")
-    def test_cleanup_update_residue(self, mock_clean):
-        """_cleanup_update_residue 调用 clean_update_cache"""
+    def test_run_startup_cleanup(self, mock_clean):
+        """_run_startup_cleanup 调用 clean_update_cache"""
         logger = logging.getLogger("test_cleanup")
         logger.setLevel(logging.DEBUG)
-        _cleanup_update_residue(logger)
+        _run_startup_cleanup(logger)
         mock_clean.assert_called_once()
 
     @mock.patch("ALAS_Logs_Archive.SelfUpdater._cleanup_update_residue")
     @mock.patch("ALAS_Logs_Archive.SelfUpdater.clean_update_cache")
-    def test_cleanup_update_residue_handles_verified_state(self, mock_clean, mock_residue, monkeypatch, tmp_path):
-        """_cleanup_update_residue 应通过状态处理链路清理 verified 残留。"""
+    def test_run_startup_cleanup_handles_verified_state(self, mock_clean, mock_residue, monkeypatch, tmp_path):
+        """_run_startup_cleanup 应通过状态处理链路清理 verified 残留。"""
         from modules.config_self_updater import UpdateState
 
         exe = tmp_path / "ALAS_Logs_Archive.exe"
@@ -413,7 +458,7 @@ class TestHelpers:
         state["state"] = "verified"
         state.save()
 
-        _cleanup_update_residue(logging.getLogger("test_cleanup_verified_chain"))
+        _run_startup_cleanup(logging.getLogger("test_cleanup_verified_chain"))
 
         mock_residue.assert_called_once()
         mock_clean.assert_called()
@@ -445,7 +490,7 @@ class TestHelpers:
         try:
             _handle_update_state(logger)
             mock_rollback.assert_called_once()
-            # 清理统一由 _cleanup_update_residue 包装函数处理，此处不直接调用
+            # 清理统一由 _run_startup_cleanup 包装函数处理，此处不直接调用
             mock_clean.assert_not_called()
         finally:
             state.delete()

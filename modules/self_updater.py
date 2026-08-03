@@ -792,7 +792,7 @@ class SelfUpdater:
 
         if expected_version and version_func:
             actual_version = version_func()
-            if actual_version and actual_version != expected_version:
+            if actual_version != expected_version:
                 logger.critical(
                     f"版本号不匹配:\n"
                     f"GitHub: {expected_version}\n"
@@ -963,8 +963,11 @@ class SelfUpdater:
 
         # 仅当无失败对象时才删除状态文件，否则保留精确路径供下次清理
         if not result.failed_paths:
-            state.delete()
-            result.state_deleted = True
+            if state.delete():
+                result.state_deleted = True
+            else:
+                result.failed_paths.append(str(state._file_path))
+                logger.warning("删除状态文件失败，保留供下次清理")
         else:
             logger.warning("存在未清理的更新残留，保留状态文件供下次清理")
         return result

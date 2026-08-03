@@ -120,12 +120,19 @@ class UpdateState:
         self._config.set("State", "state", new_state)
         self.save()
 
-    def delete(self) -> None:
-        """删除状态文件"""
+    def delete(self) -> bool:
+        """
+        删除状态文件
+
+        Returns:
+            True 表示已删除（文件原本不存在也视为已删除）；
+            False 表示删除失败
+        """
         try:
             self._file_path.unlink(missing_ok=True)
+            return True
         except OSError:
-            pass
+            return False
 
     def __getitem__(self, key: str) -> str:
         """通过键名自动路由到正确的节，如 state['target'] → Files.target"""
