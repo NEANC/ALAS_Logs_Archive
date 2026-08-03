@@ -386,6 +386,48 @@ def test_cleanup_mode_cleans_after_exception(
     assert "部分临时文件将在下次启动时继续清理" in capsys.readouterr().out
 
 
+@mock.patch("ALAS_Logs_Archive._handle_decompress")
+@mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+@mock.patch("ALAS_Logs_Archive.setup_logger")
+@mock.patch("ALAS_Logs_Archive.print_info")
+def test_decompress_entry_runs_startup_cleanup(
+        mock_info, mock_logger, mock_cleanup, mock_decompress, monkeypatch, tmp_path):
+    """解压入口应先执行启动兜底清理，再执行解压。"""
+    zip_file = tmp_path / "test.zip"
+    zip_file.write_bytes(b"zip")
+    monkeypatch.setattr(sys, "argv", [
+        str(tmp_path / "ALAS_Logs_Archive.py"), "-d", str(zip_file),
+    ])
+
+    call_order = []
+    mock_cleanup.side_effect = lambda *a, **k: call_order.append("cleanup")
+    mock_decompress.side_effect = lambda *a, **k: call_order.append("decompress")
+
+    main()
+
+    assert call_order == ["cleanup", "decompress"]
+    mock_cleanup.assert_called_once()
+    mock_decompress.assert_called_once()
+
+
+@mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+@mock.patch("ALAS_Logs_Archive.setup_logger")
+@mock.patch("ALAS_Logs_Archive.print_info")
+def test_cli_entry_runs_startup_cleanup(
+        mock_info, mock_logger, mock_cleanup, monkeypatch, tmp_path):
+    """CLI 入口（-t 与 -a）应先执行启动兜底清理。"""
+    monkeypatch.setattr(sys, "argv", [
+        str(tmp_path / "ALAS_Logs_Archive.py"),
+        "-t", str(tmp_path / "target"),
+        "-a", str(tmp_path / "archive"),
+    ])
+    mock_cleanup.return_value.success = True
+
+    main()
+
+    mock_cleanup.assert_called_once()
+
+
 class TestHelpers:
     """辅助函数测试"""
 

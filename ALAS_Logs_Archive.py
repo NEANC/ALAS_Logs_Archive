@@ -359,6 +359,10 @@ def main():
         save_logs_arg = bool(args.save_logs and args.save_logs.lower() == "true")
         console_lvl = getattr(logging, args.console_level) if args.console_level else logging.INFO
 
+        # 解压也是正常启动入口，需执行启动兜底清理
+        logger = setup_logger("logs", 15, console_lvl, save_logs_arg)
+        _run_startup_cleanup(logger)
+
         archive = args.decompress if args.decompress else args.zipfile
         output = args.output if args.output else os.path.splitext(archive)[0]
         _handle_decompress(archive, output, save_logs=save_logs_arg, console_level=console_lvl)
@@ -374,6 +378,9 @@ def main():
 
         logger = setup_logger(log_folder, max_log_files, log_level, save_logs)
         logger.debug(f"版本号: {VERSION}")
+
+        # CLI 也是正常启动入口，需执行启动兜底清理
+        _run_startup_cleanup(logger)
 
         target_folder = args.target
         archive_folder = args.archive
