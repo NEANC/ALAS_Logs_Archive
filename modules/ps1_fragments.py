@@ -354,6 +354,7 @@ def generate_helper_lifecycle_functions_ps1() -> str:
                     FilePath = $filePath
                     WorkingDirectory = $workDir
                     WindowStyle = 'Normal'
+                    ErrorAction = 'Stop'
                 }
                 if ($argString) {
                     $startArgs.ArgumentList = $argString

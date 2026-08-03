@@ -497,6 +497,8 @@ def test_helper_success_path_commits_then_starts_cleanup(tmp_path):
     assert '--self-update-parent-pid' in content
     assert '"$PID"' in content
     assert 'Start-CleanupAppVisible' in content
+    # 可见启动需将启动错误转为终止错误，确保 Helper 能记录 cleanup 启动失败
+    assert "ErrorAction = 'Stop'" in content
     # 主流程真实调用 Commit-Update 并检查返回值
     assert 'if (-not (Commit-Update))' in content
     # 成功路径（Commit-Update 到 exit 0）不再直接普通启动主程序
@@ -505,6 +507,10 @@ def test_helper_success_path_commits_then_starts_cleanup(tmp_path):
     success_exit = content.index('exit 0', success_start)
     success_section = content[success_start:success_exit]
     assert 'Start-NormalAppVisible' not in success_section
+    assert 'Start-CleanupAppVisible' in success_section
+    # 成功路径异步启动 cleanup 后立即退出，不等待其退出码
+    assert 'WaitForExit' not in success_section
+    assert '$LASTEXITCODE' not in success_section
     # verify 非 0 路径仍保留回滚兜底
     assert 'Restore-Backup "verify failed' in content
 
