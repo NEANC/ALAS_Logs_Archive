@@ -448,18 +448,20 @@ class TestHelpers:
         assert updater.temp_folder == ""
         assert paths["runtime_dir"] == exe.parent / "SelfUpdate" / "v2.0.0"
 
-    @mock.patch("modules.self_updater.SelfUpdater.clean_update_cache")
-    def test_run_startup_cleanup(self, mock_clean):
-        """_run_startup_cleanup 调用 clean_update_cache"""
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+    def test_run_startup_cleanup_calls_public_entry(self, mock_cleanup, monkeypatch, tmp_path):
+        """_run_startup_cleanup 只调用公开协调入口 cleanup_self_update"""
+        exe = tmp_path / "ALAS_Logs_Archive.exe"
+        exe.write_bytes(b"exe")
+        monkeypatch.setattr(sys, "argv", [str(exe)])
         logger = logging.getLogger("test_cleanup")
         logger.setLevel(logging.DEBUG)
         _run_startup_cleanup(logger)
-        mock_clean.assert_called_once()
+        mock_cleanup.assert_called_once()
 
-    @mock.patch("ALAS_Logs_Archive.SelfUpdater._cleanup_update_residue")
-    @mock.patch("ALAS_Logs_Archive.SelfUpdater.clean_update_cache")
-    def test_run_startup_cleanup_handles_verified_state(self, mock_clean, mock_residue, monkeypatch, tmp_path):
-        """_run_startup_cleanup 应通过状态处理链路清理 verified 残留。"""
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+    def test_run_startup_cleanup_handles_verified_state(self, mock_cleanup, monkeypatch, tmp_path):
+        """_run_startup_cleanup 对 verified 终态调用统一清理入口。"""
         from modules.config_self_updater import UpdateState
 
         exe = tmp_path / "ALAS_Logs_Archive.exe"
@@ -472,17 +474,61 @@ class TestHelpers:
 
         _run_startup_cleanup(logging.getLogger("test_cleanup_verified_chain"))
 
-        mock_residue.assert_called_once()
-        mock_clean.assert_called()
+        mock_cleanup.assert_called_once()
+
+        state.delete()
+
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater.rollback")
+    def test_run_startup_cleanup_skips_cleanup_when_rollback_fails(
+            self, mock_rollback, mock_cleanup, monkeypatch, tmp_path):
+        """回滚失败时保留更新现场，跳过统一清理。"""
+        from modules.config_self_updater import UpdateState
+
+        exe = tmp_path / "ALAS_Logs_Archive.exe"
+        exe.write_bytes(b"exe")
+        monkeypatch.setattr(sys, "argv", [str(exe)])
+
+        state = UpdateState()
+        state["state"] = "replacing"
+        state.save()
+        mock_rollback.return_value = False
+
+        _run_startup_cleanup(logging.getLogger("test_cleanup_rollback_failed"))
+
+        mock_rollback.assert_called_once()
+        mock_cleanup.assert_not_called()
+
+        state.delete()
+
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
+    @mock.patch("ALAS_Logs_Archive.SelfUpdater.rollback")
+    def test_run_startup_cleanup_cleans_after_successful_rollback(
+            self, mock_rollback, mock_cleanup, monkeypatch, tmp_path):
+        """回滚成功（返回 True）后继续调用统一清理入口。"""
+        from modules.config_self_updater import UpdateState
+
+        exe = tmp_path / "ALAS_Logs_Archive.exe"
+        exe.write_bytes(b"exe")
+        monkeypatch.setattr(sys, "argv", [str(exe)])
+
+        state = UpdateState()
+        state["state"] = "replacing"
+        state.save()
+        mock_rollback.return_value = True
+
+        _run_startup_cleanup(logging.getLogger("test_cleanup_rollback_ok"))
+
+        mock_rollback.assert_called_once()
+        mock_cleanup.assert_called_once()
 
         state.delete()
 
     @mock.patch("modules.self_updater.SelfUpdater.rollback")
     @mock.patch("modules.self_updater.SelfUpdater.clean_update_cache")
     def test_handle_update_state_pending_rollback(self, mock_clean, mock_rollback):
-        """_handle_update_state 在 pending 状态时触发回滚"""
+        """_handle_update_state 在 pending 状态时触发回滚并允许后续清理"""
         from modules.config_self_updater import UpdateState
-        import tempfile, shutil
 
         logger = logging.getLogger("test_hup")
         logger.setLevel(logging.DEBUG)
@@ -500,7 +546,9 @@ class TestHelpers:
         state.save()
 
         try:
-            _handle_update_state(logger)
+            # mock_rollback 默认返回 Mock（真值），表示回滚成功
+            result = _handle_update_state(logger)
+            assert result is True
             mock_rollback.assert_called_once()
             # 清理统一由 _run_startup_cleanup 包装函数处理，此处不直接调用
             mock_clean.assert_not_called()

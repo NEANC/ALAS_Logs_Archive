@@ -142,11 +142,21 @@ def _handle_decompress(archive_path: str, output_dir: str, save_logs: bool = Fal
         raise
 
 
-def _handle_update_state(logger: logging.Logger) -> None:
-    """检查并处理中断的更新状态（非终态先回滚，终态清理由协调入口统一处理）"""
+def _handle_update_state(logger: logging.Logger) -> bool:
+    """检查并处理中断的更新状态。
+
+    非终态先回滚；回滚失败时返回 False，由调用方保留更新现场并跳过清理，
+    避免删除仍可能用于恢复或重试的更新文件。
+
+    Args:
+        logger: 日志记录器
+
+    Returns:
+        True 表示可以继续执行清理；False 表示回滚未完成，应保留现场
+    """
     state = UpdateState.load()
     if not state:
-        return
+        return True
 
     current_state = state.get("State", "state", fallback="idle")
     if current_state == "failed_disabled":
@@ -155,7 +165,10 @@ def _handle_update_state(logger: logging.Logger) -> None:
     elif current_state in ("downloaded_verified", "helper_started", "replacing",
                             "pending_new_verify", "rollback"):
         logger.warning(f"检测到未完成的更新（状态: {current_state}），尝试回滚...")
-        SelfUpdater.rollback(logger)
+        if not SelfUpdater.rollback(logger):
+            logger.critical("回滚失败，保留更新现场并跳过本次清理")
+            return False
+    return True
 
 
 def _is_process_running(process_id: int) -> bool:
@@ -255,8 +268,12 @@ def _build_updater(logger: logging.Logger, config_mgr, is_bundled: bool,
 
 
 def _run_startup_cleanup(logger: logging.Logger) -> None:
-    """处理更新状态（含失败状态提示与未完成更新回滚），随后执行完整自更新清理。"""
-    _handle_update_state(logger)
+    """处理更新状态（含失败状态提示与未完成更新回滚），随后执行完整自更新清理。
+
+    回滚失败或无需清理时保留更新现场，不调用协调入口。
+    """
+    if not _handle_update_state(logger):
+        return
     SelfUpdater.cleanup_self_update(get_self_update_root(), logger)
 
 
