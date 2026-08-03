@@ -185,6 +185,7 @@ class TestSelfUpdateInternalArgs:
         internal_names = [
             "self-update-verify", "expected-sha256", "expected-version",
             "retry-update", "update-failed",
+            "self-update-cleanup", "self-update-parent-pid",
         ]
         for name in internal_names:
             assert name not in help_text, f"'{name}' should be hidden from --help"
@@ -300,7 +301,7 @@ class TestSelfUpdateE2E:
 @mock.patch("ALAS_Logs_Archive.print_info")
 def test_cleanup_mode_waits_then_cleans_and_exits(
         mock_info, mock_logger, mock_wait, mock_cleanup, monkeypatch):
-    """cleanup 模式应显示界面、等待 Helper、清理并直接退出。"""
+    """cleanup 模式应按 显示界面→等待 Helper→清理 顺序执行并直接退出。"""
     monkeypatch.setattr(
         sys,
         "argv",
@@ -309,10 +310,18 @@ def test_cleanup_mode_waits_then_cleans_and_exits(
     )
     mock_cleanup.return_value.success = True
 
+    call_order = []
+    mock_info.side_effect = lambda: call_order.append("info")
+    mock_wait.side_effect = lambda *a, **k: call_order.append("wait")
+    mock_cleanup.side_effect = lambda *a, **k: (
+        call_order.append("cleanup"), mock_cleanup.return_value
+    )[1]
+
     with pytest.raises(SystemExit) as exc_info:
         main()
 
     assert exc_info.value.code == 0
+    assert call_order == ["info", "wait", "cleanup"]
     mock_info.assert_called_once()
     mock_wait.assert_called_once_with(321, mock_logger.return_value)
     mock_cleanup.assert_called_once()
@@ -341,13 +350,16 @@ def test_cleanup_mode_reports_partial_failure(
     assert "部分临时文件将在下次启动时继续清理" in capsys.readouterr().out
 
 
+@mock.patch("ALAS_Logs_Archive.SelfUpdater.check_self_update")
+@mock.patch("ALAS_Logs_Archive.SelfUpdater.rollback")
 @mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
 @mock.patch("ALAS_Logs_Archive.wait_for_process_exit")
 @mock.patch("ALAS_Logs_Archive.setup_logger")
 @mock.patch("ALAS_Logs_Archive.print_info")
 def test_cleanup_mode_proceeds_after_wait_timeout(
-        mock_info, mock_logger, mock_wait, mock_cleanup, monkeypatch):
-    """等待 Helper 超时后仍执行清理并以 0 退出。"""
+        mock_info, mock_logger, mock_wait, mock_cleanup, mock_rollback,
+        mock_check, monkeypatch):
+    """等待 Helper 超时后仍执行清理、不回滚不重试更新并以 0 退出。"""
     monkeypatch.setattr(
         sys,
         "argv",
@@ -362,6 +374,9 @@ def test_cleanup_mode_proceeds_after_wait_timeout(
 
     assert exc_info.value.code == 0
     mock_cleanup.assert_called_once()
+    # cleanup 模式不触发回滚或重试更新
+    mock_rollback.assert_not_called()
+    mock_check.assert_not_called()
 
 
 @mock.patch("ALAS_Logs_Archive.SelfUpdater.cleanup_self_update")
