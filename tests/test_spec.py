@@ -580,6 +580,83 @@ def test_replace_executable_writes_runtime_paths_to_state(monkeypatch, tmp_path)
     assert state['backup_file'] == str(custom_temp / 'v2.0.0' / 'TwoPush.backup.exe')
 
 
+def test_replace_executable_aborts_when_initial_state_save_fails(monkeypatch, tmp_path):
+    """状态文件首次写入失败时中止替换流程，不生成更新脚本也不启动 helper。"""
+    from modules.self_updater import SelfUpdater
+
+    exe = tmp_path / 'program' / 'TwoPush.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'old')
+    tmp_new = tmp_path / 'downloaded.exe'
+    tmp_new.write_bytes(b'new')
+    sha = tmp_path / 'downloaded.sha256'
+    sha.write_text('hash', encoding='utf-8')
+    custom_temp = tmp_path / 'self-update-root'
+
+    monkeypatch.setattr('modules.self_updater.get_exe_path', lambda: exe)
+    monkeypatch.setattr('modules.self_updater.os.getpid', lambda: 1234)
+    monkeypatch.setattr('modules.self_updater.subprocess.CREATE_NEW_PROCESS_GROUP', 0, raising=False)
+    monkeypatch.setattr('modules.self_updater.subprocess.CREATE_NO_WINDOW', 0, raising=False)
+    monkeypatch.setattr('modules.self_updater.UpdateState.save',
+                        mock.Mock(return_value=False))
+    popen = mock.Mock()
+    monkeypatch.setattr('modules.self_updater.subprocess.Popen', popen)
+    monkeypatch.setattr(sys, 'argv', [str(exe)])
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        temp_folder=str(custom_temp),
+        logger=logging.getLogger('test_replace_save_fail'),
+    )
+
+    with pytest.raises(RuntimeError):
+        updater._replace_executable(tmp_new, sha, 'v2.0.0', 'oldhash', 'newhash')
+    popen.assert_not_called()
+
+
+def test_replace_executable_aborts_when_helper_started_transition_fails(monkeypatch, tmp_path):
+    """helper_started 状态持久化失败时中止替换流程，不启动 helper。"""
+    from modules.self_updater import SelfUpdater
+
+    exe = tmp_path / 'program' / 'TwoPush.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'old')
+    tmp_new = tmp_path / 'downloaded.exe'
+    tmp_new.write_bytes(b'new')
+    sha = tmp_path / 'downloaded.sha256'
+    sha.write_text('hash', encoding='utf-8')
+    custom_temp = tmp_path / 'self-update-root'
+
+    monkeypatch.setattr('modules.self_updater.get_exe_path', lambda: exe)
+    monkeypatch.setattr('modules.self_updater.os.getpid', lambda: 1234)
+    monkeypatch.setattr('modules.self_updater.subprocess.CREATE_NEW_PROCESS_GROUP', 0, raising=False)
+    monkeypatch.setattr('modules.self_updater.subprocess.CREATE_NO_WINDOW', 0, raising=False)
+    # 首次 save() 正常写入，仅 helper_started 状态转换持久化失败
+    monkeypatch.setattr('modules.self_updater.UpdateState.transition',
+                        mock.Mock(return_value=False))
+    popen = mock.Mock()
+    monkeypatch.setattr('modules.self_updater.subprocess.Popen', popen)
+    monkeypatch.setattr(sys, 'argv', [str(exe)])
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        temp_folder=str(custom_temp),
+        logger=logging.getLogger('test_replace_transition_fail'),
+    )
+
+    with pytest.raises(RuntimeError):
+        updater._replace_executable(tmp_new, sha, 'v2.0.0', 'oldhash', 'newhash')
+    popen.assert_not_called()
+
+
 # ── 任务 6 测试 ──
 
 def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_path):
@@ -843,6 +920,36 @@ def test_rollback_uses_backup_file_in_runtime_dir(monkeypatch, tmp_path):
     state.save()
 
     assert SelfUpdater.rollback(logging.getLogger('test_rollback_runtime')) is True
+    assert target.read_bytes() == b'old'
+    assert not backup.exists()
+
+
+def test_rollback_returns_true_when_rollback_done_persist_fails(monkeypatch, tmp_path):
+    """文件回滚成功但 rollback_done 状态持久化失败时，应返回 True 允许继续清理。"""
+    from modules.config_self_updater import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime' / 'v2.0.0'
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+    target = program_dir / 'TwoPush.exe'
+    backup = runtime_dir / 'TwoPush.backup.exe'
+    target.write_bytes(b'broken')
+    backup.write_bytes(b'old')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'failed_disabled'
+    state['target'] = str(target)
+    state['runtime_dir'] = str(runtime_dir)
+    state['backup_file'] = str(backup)
+    state.save()
+
+    monkeypatch.setattr('modules.self_updater.UpdateState.transition',
+                        mock.Mock(return_value=False))
+
+    assert SelfUpdater.rollback(logging.getLogger('test_rollback_persist_fail')) is True
     assert target.read_bytes() == b'old'
     assert not backup.exists()
 

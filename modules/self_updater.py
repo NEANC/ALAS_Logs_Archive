@@ -522,13 +522,17 @@ class SelfUpdater:
         state["new_sha256"] = new_sha256
         state.set("Retry", "retry_count", _get_existing_retry_count())
         state.set("Retry", "max_retry", "3")
-        state.save()
+        if not state.save():
+            # 状态文件是 PowerShell helper 替换链路的唯一数据源，
+            # 写入失败时继续启动 helper 会导致替换在缺失关键路径的情况下执行
+            raise RuntimeError("写入更新状态文件失败，中止更新替换流程")
 
         self._generate_helper_ps1(paths)
         self._generate_update_ps1(paths)
         self.logger.info(f"已生成更新脚本到目录: {paths['runtime_dir']}")
 
-        state.transition("helper_started")
+        if not state.transition("helper_started"):
+            raise RuntimeError("更新状态写入失败（helper_started），中止启动更新进程")
 
         self.logger.info("启动更新进程...")
         lock_file = paths['lock_file']
@@ -851,36 +855,6 @@ class SelfUpdater:
         return result
 
     @staticmethod
-    def clean_update_scripts(exe_dir: str, app_name: str,
-                             logger: logging.Logger,
-                             new_file: str = "",
-                             backup_file: str = "") -> None:
-        """[已废弃] 清理更新产生的文件 — 请改用 _cleanup_update_residue()"""
-        import warnings
-        warnings.warn(
-            "clean_update_scripts 已废弃，请改用 SelfUpdater._cleanup_update_residue()",
-            DeprecationWarning, stacklevel=2)
-        base = Path(exe_dir)
-        files = [
-            base / f"{app_name}_Update_Helper.ps1",
-            base / f"{app_name}_Update.ps1",
-            base / f"{app_name}.new.exe",
-            base / "update_started.lock",
-            base / "update.log",
-        ]
-        if backup_file:
-            files.append(Path(backup_file))
-        if new_file:
-            files.append(Path(new_file))
-        for fp in files:
-            try:
-                if fp.exists():
-                    fp.unlink()
-                    logger.debug(f"已清理: {fp}")
-            except OSError:
-                pass
-
-    @staticmethod
     def _cleanup_update_residue(logger: logging.Logger) -> CleanupResult:
         """按状态文件记录的路径清理更新运行时文件残留。
 
@@ -1015,7 +989,13 @@ class SelfUpdater:
                 target.unlink()
             backup_file.rename(target)
             logger.info(f"已回滚: {target}")
-            return state.transition("rollback_done")
+            if state.transition("rollback_done"):
+                return True
+            # 文件已恢复旧版，回滚实质完成；仅 rollback_done 状态持久化失败。
+            # 返回 True 允许后续继续清理，避免将文件回滚成功误判为失败，
+            # 导致更新现场无限期残留。
+            logger.critical("文件已回滚，但 rollback_done 状态持久化失败，允许继续清理")
+            return True
         except OSError as e:
             logger.critical(f"回滚失败: {e}")
             return False
