@@ -1015,8 +1015,7 @@ class SelfUpdater:
                 target.unlink()
             backup_file.rename(target)
             logger.info(f"已回滚: {target}")
-            state.transition("rollback_done")
-            return True
+            return state.transition("rollback_done")
         except OSError as e:
             logger.critical(f"回滚失败: {e}")
             return False

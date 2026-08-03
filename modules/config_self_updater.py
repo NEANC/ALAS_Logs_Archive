@@ -86,19 +86,25 @@ class UpdateState:
             return None
         return state
 
-    def save(self) -> None:
-        """写入更新状态文件（原子写入：先写临时文件再替换）"""
+    def save(self) -> bool:
+        """写入更新状态文件（原子写入：先写临时文件再替换）
+
+        Returns:
+            写入成功返回 True，失败返回 False
+        """
         tmp_path = self._file_path.with_suffix('.ini.tmp')
         try:
             with open(tmp_path, 'w', encoding='utf-8') as f:
                 self._config.write(f)
             tmp_path.replace(self._file_path)
+            return True
         except OSError as e:
             logging.getLogger("SelfUpdater").error(f"写入状态文件失败: {e}")
             try:
                 tmp_path.unlink(missing_ok=True)
             except OSError:
                 pass
+            return False
 
     def get(self, section: str, key: str, fallback: str = "") -> str:
         """读取状态值"""
@@ -108,17 +114,20 @@ class UpdateState:
         """设置状态值"""
         self._config.set(section, key, value)
 
-    def transition(self, new_state: str) -> None:
+    def transition(self, new_state: str) -> bool:
         """
         执行状态转换并自动保存
 
         Args:
             new_state: 目标状态
+
+        Returns:
+            持久化成功返回 True，失败返回 False
         """
         if new_state not in self.VALID_STATES:
             raise ValueError(f"无效的状态转换: {new_state}")
         self._config.set("State", "state", new_state)
-        self.save()
+        return self.save()
 
     def delete(self) -> bool:
         """
